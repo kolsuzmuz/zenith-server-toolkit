@@ -21,14 +21,14 @@ def resolve_paths(cli_log=None, cli_db=None):
     variables, command line arguments, and standard candidate locations.
     """
     resolved_log = None
-    if cli_log and os.path.exists(cli_log):
+    if cli_log:
         resolved_log = os.path.abspath(cli_log)
-    elif "SESSIONS_LOG" in os.environ and os.path.exists(os.environ["SESSIONS_LOG"]):
+    elif "SESSIONS_LOG" in os.environ and os.environ["SESSIONS_LOG"]:
         resolved_log = os.path.abspath(os.environ["SESSIONS_LOG"])
     else:
         log_candidates = []
         for env_key in ("ZENITH_DIR", "ZENITH_HOME", "PROXY_DIR"):
-            if env_key in os.environ:
+            if env_key in os.environ and os.environ[env_key]:
                 log_candidates.append(os.path.join(os.environ[env_key], "sessions.log"))
 
         log_candidates.extend([

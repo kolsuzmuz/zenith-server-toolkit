@@ -50,6 +50,12 @@ public class ScoreboardDeathLogger extends Module {
         Globals.EXECUTOR.scheduleWithFixedDelay(this::poll, 0, 1, TimeUnit.SECONDS);
     }
 
+    private static String cleanName(String name) {
+        if (name == null) return null;
+        String clean = name.replaceAll("§[0-9a-fk-orA-FK-OR]", "").trim();
+        return clean.isEmpty() ? null : clean;
+    }
+
     /**
      * Default event-driven tracking: parses in-game death messages.
      * Works on any server that displays death announcements.
@@ -65,15 +71,18 @@ public class ScoreboardDeathLogger extends Module {
             DeathMessageParseResult result = event.deathMessage();
             if (result == null) return;
 
-            String victim = result.victim();
-            if (victim != null && !victim.isBlank()) {
-                deaths.increment(victim.trim());
+            String victim = cleanName(result.victim());
+            if (victim != null) {
+                deaths.increment(victim);
             }
 
             if (result.killer().isPresent()) {
                 Killer killer = result.killer().get();
-                if (killer.type() == KillerType.PLAYER && killer.name() != null && !killer.name().isBlank()) {
-                    kills.increment(killer.name().trim());
+                if (killer.type() == KillerType.PLAYER && killer.name() != null) {
+                    String killerName = cleanName(killer.name());
+                    if (killerName != null) {
+                        kills.increment(killerName);
+                    }
                 }
             }
         } catch (Throwable t) {
@@ -175,7 +184,8 @@ public class ScoreboardDeathLogger extends Module {
                 for (String line : Files.readAllLines(file)) {
                     int sep = line.lastIndexOf(" : ");
                     if (sep == -1) continue;
-                    String username = line.substring(0, sep).trim();
+                    String username = cleanName(line.substring(0, sep));
+                    if (username == null) continue;
                     try {
                         knownScores.put(username, Integer.parseInt(line.substring(sep + 3).trim()));
                     } catch (NumberFormatException ignored) {}
@@ -186,9 +196,11 @@ public class ScoreboardDeathLogger extends Module {
         }
 
         synchronized void increment(String username) {
+            String clean = cleanName(username);
+            if (clean == null) return;
             loadIfNeeded();
-            int current = knownScores.getOrDefault(username, 0);
-            knownScores.put(username, current + 1);
+            int current = knownScores.getOrDefault(clean, 0);
+            knownScores.put(clean, current + 1);
             writeFile();
         }
 
@@ -199,7 +211,8 @@ public class ScoreboardDeathLogger extends Module {
 
             boolean dirty = false;
             for (Map.Entry<String, Score> entry : objective.getScores().entrySet()) {
-                String username = entry.getKey();
+                String username = cleanName(entry.getKey());
+                if (username == null) continue;
                 int newValue = entry.getValue().getValue();
                 Integer oldValue = knownScores.get(username);
                 if (oldValue == null || newValue > oldValue) {

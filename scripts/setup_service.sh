@@ -22,7 +22,19 @@ EXEC_USER="${SUDO_USER:-$(id -un)}"
 # Detect port, host, and optional database override
 PORT="${1:-${PORT:-8080}}"
 HOST="${2:-${HOST:-0.0.0.0}}"
-DB_PATH="${3:-${SESSIONS_DB:-}}"
+
+# Safely expand DB_PATH if provided (e.g. ~/zenithproxy/sessions.db -> /home/user/zenithproxy/sessions.db)
+if [ -n "${3:-${SESSIONS_DB:-}}" ]; then
+    RAW_DB="${3:-${SESSIONS_DB:-}}"
+    if [[ "$RAW_DB" == "~"* ]]; then
+        USER_HOME="$(eval echo "~${EXEC_USER}")"
+        DB_PATH="${USER_HOME}${RAW_DB:1}"
+    else
+        DB_PATH="$(readlink -f "$RAW_DB" 2>/dev/null || realpath "$RAW_DB" 2>/dev/null || echo "$RAW_DB")"
+    fi
+else
+    DB_PATH=""
+fi
 
 SERVICE_FILE="/etc/systemd/system/zenith-dashboard.service"
 GENERATED_FILE="${TOOLKIT_ROOT}/systemd/zenith-dashboard.service"
@@ -40,6 +52,7 @@ User=${EXEC_USER}
 WorkingDirectory=${SITE_DIR}
 Environment="HOST=${HOST}"
 Environment="PORT=${PORT}"
+Environment="PYTHONDONTWRITEBYTECODE=1"
 $( [ -n "$DB_PATH" ] && echo "Environment=\"SESSIONS_DB=${DB_PATH}\"" )
 EnvironmentFile=-/etc/default/zenith-dashboard
 ExecStart=${PYTHON_BIN} ${SERVER_SCRIPT}

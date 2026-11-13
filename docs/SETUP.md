@@ -143,19 +143,20 @@ git clone https://github.com/kolsuzmuz/zenith-server-toolkit.git ~/zenith-server
 cd ~/zenith-server-toolkit
 ./scripts/download_plugin.sh
 ```
-*The script automatically scans your system, locates your proxy `plugins/` directory, and downloads the latest `.jar`.*
+*The script automatically queries GitHub Releases for the latest asset, detects your proxy `plugins/` directory (e.g. `~/zenithproxy/plugins`), removes any older versions to prevent duplicate plugin conflicts, and downloads the latest `.jar`. You can also pass a custom plugins directory as an argument: `./scripts/download_plugin.sh /path/to/plugins`.*
 
 ### Option B: One-Command Download via GitHub CLI
 If you have the `gh` tool installed:
 ```bash
-gh release download latest -p "*.jar" -D ~/zenithproxy/plugins --clobber
+gh release download latest -R kolsuzmuz/zenith-server-toolkit -p "*.jar" -D ~/zenithproxy/plugins --clobber
 ```
 
 ### Option C: Direct cURL Download
 ```bash
 mkdir -p ~/zenithproxy/plugins
-curl -fsSL https://github.com/kolsuzmuz/zenith-server-toolkit/releases/latest/download/ZenithServerToolkit-1.0.0.jar \
-  -o ~/zenithproxy/plugins/ZenithServerToolkit-1.0.0.jar
+# Downloads the latest release artifact dynamically:
+LATEST_URL=$(curl -fsSL https://api.github.com/repos/kolsuzmuz/zenith-server-toolkit/releases/latest | grep -o 'https://github.com/[^"]*/releases/download/[^"]*/ZenithServerToolkit[^"]*\.jar' | head -n 1)
+curl -fsSL "$LATEST_URL" -o ~/zenithproxy/plugins/$(basename "$LATEST_URL")
 ```
 
 ---
@@ -260,7 +261,7 @@ nohup python3 scripts/import_sessions.py --loop > /dev/null 2>&1 &
 ### Crontab Auto-Start on Boot
 Add an entry to crontab (`crontab -e`):
 ```cron
-@reboot nohup python3 /path/to/zenith-server-toolkit/scripts/import_sessions.py --loop > /dev/null 2>&1 &
+@reboot nohup python3 $HOME/zenith-server-toolkit/scripts/import_sessions.py --loop > /dev/null 2>&1 &
 ```
 
 ---
@@ -268,6 +269,8 @@ Add an entry to crontab (`crontab -e`):
 ## 8. Web Dashboard Setup
 
 The web dashboard renders an interactive player count graph with multi-range filters (3h, 6h, 12h, 1d, 7d, 15d, 30d).
+
+The `/api` endpoint automatically attaches `Access-Control-Allow-Origin: *` headers, allowing cross-origin requests from external web apps, Discord status widgets, and Grafana dashboards.
 
 ### Local Testing
 ```bash
@@ -279,15 +282,17 @@ Custom flags (e.g. changing port or database):
 ```bash
 python3 site/server.py --port 8080 --host 0.0.0.0 --db /path/to/sessions.db
 ```
+*(Explicit `--db` arguments and `SESSIONS_DB` environment variables take strict priority even if the database has not been populated yet).*
 
 ### Production Systemd Service (1-Command Auto Setup)
 A helper script automates systemd unit creation on any VDS:
 ```bash
 sudo ./scripts/setup_service.sh
 ```
-This detects your active user, Python 3 path, and repository directory, installs `/etc/systemd/system/zenith-dashboard.service`, reloads systemd, and starts the service. You can also specify a custom port as an argument:
+This detects your active user, Python 3 path, and repository directory, installs `/etc/systemd/system/zenith-dashboard.service`, reloads systemd, and starts the service. You can also specify a custom port or database path:
 ```bash
-sudo ./scripts/setup_service.sh 8085
+# Example with custom port and custom DB location (tilde '~' is safely expanded)
+sudo ./scripts/setup_service.sh 8085 0.0.0.0 ~/zenithproxy/sessions.db
 ```
 
 Useful service commands:
@@ -383,12 +388,12 @@ The watchdog script (`scripts/watchdog.sh`) ensures ZenithProxy automatically re
    ```bash
    crontab -e
    ```
-   Add the following line (replace `/path/to/zenith-server-toolkit` with your actual directory):
+   Add the following line (replace `$HOME/zenith-server-toolkit` if installed in a custom location):
    ```cron
-   */5 * * * * flock -n /tmp/watchdog.lock /path/to/zenith-server-toolkit/scripts/watchdog.sh
+   */5 * * * * flock -n /tmp/watchdog.lock $HOME/zenith-server-toolkit/scripts/watchdog.sh
    ```
 
-*The `flock` utility prevents duplicate watchdog executions if a restart takes longer than 5 minutes.*
+*The `flock` utility prevents duplicate watchdog executions if a restart takes longer than 5 minutes. The script requires `tmux` and checks for its availability before running.*
 
 ---
 
@@ -427,11 +432,30 @@ To prevent data loss of historical playtime, kills, and session statistics:
   ```bash
   python3 scripts/import_sessions.py --loop
   ```
+  You can also pass the database path explicitly:
+  ```bash
+  python3 site/server.py --db /path/to/sessions.db
+  ```
 
 ### Issue: Bot does not reply to commands in Minecraft chat
 - **Cause 1:** Live replies are disabled by default. Ensure `chatbot_reply.enabled` exists in your proxy root folder.
 - **Cause 2:** Command was sent during the 8-second player cooldown or 3-second global cooldown.
 - **Cause 3:** Bot account was muted by the server or lacks permission to speak in public chat. Check proxy console for errors.
+
+### Issue: Watchdog does not restart ZenithProxy
+- **Cause 1:** `tmux` is not installed on the system. Run: `sudo apt install tmux`.
+- **Cause 2:** The launch script lacks execution permissions. Run: `chmod +x ~/zenithproxy/launch`.
+- **Cause 3:** Settling delay is running. When tested interactively, the watchdog script waits 90 seconds before restarting to prevent false alarms during planned server updates.
+
+### Issue: Plugin was not loaded by ZenithProxy
+- **Cause 1:** Ensure `ZenithServerToolkit-*.jar` was placed inside `~/zenithproxy/plugins/`. If installed in another folder, specify it:
+  ```bash
+  ./scripts/download_plugin.sh /path/to/zenithproxy/plugins
+  ```
+- **Cause 2:** Make sure there are no duplicate versions in `plugins/`. `download_plugin.sh` automatically removes older versions during installation.
+
+### Issue: Cross-Origin (CORS) errors accessing /api
+- **Solution:** `/api` includes `Access-Control-Allow-Origin: *` out of the box. Ensure requests use standard HTTP methods (`GET`, `OPTIONS`).
 
 ### Issue: "Port 8080 already in use"
 - **Solution:** Another process is listening on port 8080. Start the server on a different port:

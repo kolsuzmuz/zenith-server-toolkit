@@ -38,28 +38,45 @@ resolve_target_dir() {
         return 0
     fi
 
-    # 4. Candidate directories
-    local candidates=(
-        "${TOOLKIT_ROOT}/../plugins"
+    # 4. Check existing plugins directories
+    local existing_candidates=(
         "${TOOLKIT_ROOT}/../zenithproxy/plugins"
-        "${TOOLKIT_ROOT}/../proxy/plugins"
-        "${TOOLKIT_ROOT}/zenithproxy/plugins"
         "${HOME}/zenithproxy/plugins"
+        "${TOOLKIT_ROOT}/../proxy/plugins"
         "${HOME}/proxy/plugins"
+        "${TOOLKIT_ROOT}/zenithproxy/plugins"
         "${HOME}/.zenithproxy/plugins"
         "/opt/zenithproxy/plugins"
         "/var/zenithproxy/plugins"
+        "${TOOLKIT_ROOT}/../plugins"
     )
 
-    for dir in "${candidates[@]}"; do
-        if [ -d "$dir" ] || [ -d "$(dirname "$dir")" ]; then
+    for dir in "${existing_candidates[@]}"; do
+        if [ -d "$dir" ]; then
             echo "$dir"
             return 0
         fi
     done
 
-    # 5. Default fallback
-    echo "./plugins"
+    # 5. Check existing proxy root directories to attach /plugins to
+    local proxy_roots=(
+        "${HOME}/zenithproxy"
+        "${TOOLKIT_ROOT}/../zenithproxy"
+        "${HOME}/proxy"
+        "${TOOLKIT_ROOT}/../proxy"
+        "/opt/zenithproxy"
+        "/var/zenithproxy"
+    )
+
+    for pdir in "${proxy_roots[@]}"; do
+        if [ -d "$pdir" ]; then
+            echo "$pdir/plugins"
+            return 0
+        fi
+    done
+
+    # 6. Default standard fallback
+    echo "${HOME}/zenithproxy/plugins"
 }
 
 TARGET_DIR="$(resolve_target_dir "${1:-}")"
@@ -88,33 +105,63 @@ echo "[*] Target plugins folder: $TARGET_DIR"
 echo "[*] Repository source: $REPO"
 
 downloaded=false
+TEMP_JAR="${TARGET_DIR}/.ZenithServerToolkit-download.tmp"
+FINAL_JAR=""
+
+# Helper to find the latest release asset URL from GitHub API
+detect_latest_release_url() {
+    local api_url="https://api.github.com/repos/${REPO}/releases/latest"
+    local found_url=""
+    if command -v curl >/dev/null 2>&1; then
+        found_url="$(curl -fsSL "$api_url" 2>/dev/null | grep -o 'https://github.com/[^"]*/releases/download/[^"]*/ZenithServerToolkit[^"]*\.jar' | head -n 1 || true)"
+    elif command -v wget >/dev/null 2>&1; then
+        found_url="$(wget -qO- "$api_url" 2>/dev/null | grep -o 'https://github.com/[^"]*/releases/download/[^"]*/ZenithServerToolkit[^"]*\.jar' | head -n 1 || true)"
+    fi
+    echo "$found_url"
+}
 
 # Method 1: GitHub CLI (gh)
 if command -v gh >/dev/null 2>&1; then
     echo "[*] Attempting download via gh CLI..."
     if gh release download latest -R "$REPO" -p "*.jar" -D "$TARGET_DIR" --clobber 2>/dev/null; then
         downloaded=true
+        FINAL_JAR="$(find "$TARGET_DIR" -maxdepth 1 -name "ZenithServerToolkit*.jar" ! -name "*-sources.jar" | head -n 1 || true)"
     elif gh run download -R "$REPO" -n zenith-server-toolkit-jar --dir "$TARGET_DIR" 2>/dev/null; then
         downloaded=true
+        FINAL_JAR="$(find "$TARGET_DIR" -maxdepth 1 -name "ZenithServerToolkit*.jar" ! -name "*-sources.jar" | head -n 1 || true)"
     fi
 fi
 
-# Method 2: cURL / Wget from GitHub Release
+# Method 2: cURL / Wget with dynamic asset detection from GitHub API / latest redirect
 if [ "$downloaded" = false ]; then
-    RELEASE_URL="https://github.com/${REPO}/releases/latest/download/ZenithServerToolkit-1.0.0.jar"
-    OUTPUT_FILE="${TARGET_DIR}/ZenithServerToolkit-1.0.0.jar"
+    echo "[*] Detecting latest release asset from GitHub..."
+    RELEASE_URL="$(detect_latest_release_url)"
+
+    # Fallback to standard release naming if API rate-limited
+    if [ -z "$RELEASE_URL" ]; then
+        RELEASE_URL="https://github.com/${REPO}/releases/latest/download/ZenithServerToolkit-1.0.0.jar"
+    fi
+
+    JAR_NAME="$(basename "$RELEASE_URL")"
+    FINAL_JAR="${TARGET_DIR}/${JAR_NAME}"
 
     if command -v curl >/dev/null 2>&1; then
-        echo "[*] Downloading via curl..."
-        if curl -fsSL "$RELEASE_URL" -o "$OUTPUT_FILE" 2>/dev/null; then
+        echo "[*] Downloading via curl from ${RELEASE_URL}..."
+        if curl -fsSL "$RELEASE_URL" -o "$TEMP_JAR" 2>/dev/null; then
+            # Clean up any existing ZenithServerToolkit jars to prevent duplicate version conflicts
+            rm -f "${TARGET_DIR}"/ZenithServerToolkit*.jar
+            mv "$TEMP_JAR" "$FINAL_JAR"
             downloaded=true
         fi
     elif command -v wget >/dev/null 2>&1; then
-        echo "[*] Downloading via wget..."
-        if wget -q "$RELEASE_URL" -O "$OUTPUT_FILE" 2>/dev/null; then
+        echo "[*] Downloading via wget from ${RELEASE_URL}..."
+        if wget -q "$RELEASE_URL" -O "$TEMP_JAR" 2>/dev/null; then
+            rm -f "${TARGET_DIR}"/ZenithServerToolkit*.jar
+            mv "$TEMP_JAR" "$FINAL_JAR"
             downloaded=true
         fi
     fi
+    rm -f "$TEMP_JAR"
 fi
 
 # Method 3: Local build artifact fallback if found
@@ -122,7 +169,9 @@ if [ "$downloaded" = false ]; then
     LOCAL_JAR="$(find "${TOOLKIT_ROOT}/plugin/build/libs" -name "ZenithServerToolkit*.jar" ! -name "*-sources.jar" 2>/dev/null | head -n 1 || true)"
     if [ -n "$LOCAL_JAR" ] && [ -f "$LOCAL_JAR" ]; then
         echo "[*] Found pre-built local artifact: $LOCAL_JAR"
+        rm -f "${TARGET_DIR}"/ZenithServerToolkit*.jar
         cp "$LOCAL_JAR" "$TARGET_DIR/"
+        FINAL_JAR="${TARGET_DIR}/$(basename "$LOCAL_JAR")"
         downloaded=true
     fi
 fi

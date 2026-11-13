@@ -121,7 +121,7 @@ git clone https://github.com/kolsuzmuz/zenith-server-toolkit.git ~/zenith-server
 cd ~/zenith-server-toolkit
 ./scripts/download_plugin.sh
 ```
-*The script automatically detects where ZenithProxy is installed and downloads the latest `.jar`.*
+*The script queries GitHub Releases dynamically, automatically locates your ZenithProxy `plugins/` directory (e.g. `~/zenithproxy/plugins`), cleans up any older versions to prevent duplicate plugin conflicts, and installs the latest `.jar`. You can also pass a custom plugins directory as an argument: `./scripts/download_plugin.sh /opt/zenithproxy/plugins`.*
 
 ### 2. Start Session Data Importer
 Run the background importer (converts `sessions.log` into SQLite `sessions.db`):
@@ -143,8 +143,9 @@ sudo ./scripts/setup_service.sh
 ### 4. Enable Watchdog (Crash Recovery)
 Add to your crontab (`crontab -e`):
 ```cron
-*/5 * * * * flock -n /tmp/watchdog.lock /path/to/zenith-server-toolkit/scripts/watchdog.sh
+*/5 * * * * flock -n /tmp/watchdog.lock $HOME/zenith-server-toolkit/scripts/watchdog.sh
 ```
+*(Requires `tmux`. Replace `$HOME/zenith-server-toolkit` with your actual installation directory if installed elsewhere).*
 
 ---
 
@@ -295,6 +296,9 @@ python3 site/server.py --host 127.0.0.1 --port 9000 --db /opt/zenithproxy/sessio
 
 The dashboard exposes an integrated JSON API endpoint for external integrations (e.g. Discord bots, status websites).
 
+> [!TIP]
+> **Cross-Origin Resource Sharing (CORS):** The `/api` endpoint automatically attaches `Access-Control-Allow-Origin: *` and supports HTTP `OPTIONS` pre-flight requests. You can fetch player data directly from browser client applications or cross-domain status dashboards without CORS proxy workarounds.
+
 #### Request
 ```http
 GET /api?range={span} HTTP/1.1
@@ -430,7 +434,7 @@ When ZenithProxy releases an update for a new Minecraft version:
 ### 1. Dashboard says "Database file (sessions.db) not found"
 - Ensure `scripts/import_sessions.py` has been started.
 - Check that ZenithProxy has been running long enough to generate at least one heartbeat event in `sessions.log`.
-- Pass the database path explicitly: `python3 site/server.py --db /path/to/sessions.db`.
+- Pass the database path explicitly: `python3 site/server.py --db /path/to/sessions.db` (explicit `--db` and `SESSIONS_DB` are strictly prioritized).
 
 ### 2. Chatbot is not replying in Minecraft chat
 - Check whether `chatbot_reply.enabled` exists in your proxy root folder. Without it, the bot runs in Dry-Run mode.
@@ -438,9 +442,17 @@ When ZenithProxy releases an update for a new Minecraft version:
 - Ensure your Minecraft bot account has chat permissions on the target server.
 
 ### 3. Watchdog is not restarting ZenithProxy
-- Verify `tmux` is installed: `sudo apt install tmux`.
+- Verify `tmux` is installed: `sudo apt install tmux`. Watchdog checks for `tmux` before running and exits with an explicit error if missing.
 - Ensure the launch script has execution permissions: `chmod +x launch`.
-- Test running the script manually: `./scripts/watchdog.sh`.
+- Test running the script manually: `./scripts/watchdog.sh` (when proxy is stopped, it observes a 90-second settling delay with informative console output before starting).
+
+### 4. Plugin did not load after running `download_plugin.sh`
+- Ensure the `.jar` was downloaded into your actual ZenithProxy `plugins/` directory.
+- If your proxy is installed in a custom location, pass the path directly:
+  ```bash
+  ./scripts/download_plugin.sh /custom/path/to/zenithproxy/plugins
+  ```
+- Make sure only a single `ZenithServerToolkit-*.jar` exists in `plugins/` (the download script automatically clears older versions on update).
 
 ---
 

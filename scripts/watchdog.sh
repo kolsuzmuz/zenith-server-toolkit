@@ -58,8 +58,17 @@ CHECK_DELAY="${ZENITH_CHECK_DELAY:-90}"
 CONNECT_DELAY="${ZENITH_CONNECT_DELAY:-60}"
 CONNECT_CMD="${ZENITH_CONNECT_CMD:-connect}"
 
+# Ensure tmux is installed
+if ! command -v tmux >/dev/null 2>&1; then
+    mkdir -p "$(dirname "${LOG_FILE}")" 2>/dev/null || true
+    echo "$(date '+%Y-%m-%d %H:%M:%S') ERROR: tmux is not installed. Please install tmux (e.g., sudo apt install tmux)." | tee -a "${LOG_FILE}" >&2
+    exit 1
+fi
+
 is_proxy_running() {
-    pgrep -u "$(id -u)" -f "ZenithProxy" >/dev/null 2>&1 || pgrep -u "$(id -u)" -f "ZenithProxy.jar" >/dev/null 2>&1
+    # Specifically match the Java proxy process, preventing self-matching if path contains ZenithProxy
+    pgrep -u "$(id -u)" -f "java.*ZenithProxy" >/dev/null 2>&1 || \
+    pgrep -u "$(id -u)" -f "ZenithProxy.*\.jar" >/dev/null 2>&1
 }
 
 # If proxy is currently running, exit immediately
@@ -67,10 +76,12 @@ if is_proxy_running; then
     exit 0
 fi
 
-# Wait to prevent false alarms during planned updates / server restarts
+# Inform user if running in terminal and wait to prevent false alarms during updates
+echo "[*] Proxy process not detected. Waiting ${CHECK_DELAY}s settling delay before restart..."
 sleep "${CHECK_DELAY}"
 
 if is_proxy_running; then
+    echo "[*] Proxy process recovered during settling delay."
     exit 0
 fi
 

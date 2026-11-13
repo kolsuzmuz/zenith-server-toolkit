@@ -27,15 +27,15 @@ def resolve_db():
     CLI arguments, and standard candidate locations.
     """
     global DB_OVERRIDE
-    if DB_OVERRIDE and os.path.exists(DB_OVERRIDE):
+    if DB_OVERRIDE:
         return os.path.abspath(DB_OVERRIDE)
 
     # 1. Environment variables
-    if "SESSIONS_DB" in os.environ and os.path.exists(os.environ["SESSIONS_DB"]):
+    if "SESSIONS_DB" in os.environ and os.environ["SESSIONS_DB"]:
         return os.path.abspath(os.environ["SESSIONS_DB"])
 
     for env_key in ("ZENITH_DIR", "ZENITH_HOME", "PROXY_DIR"):
-        if env_key in os.environ:
+        if env_key in os.environ and os.environ[env_key]:
             p = os.path.join(os.environ[env_key], "sessions.db")
             if os.path.exists(p):
                 return os.path.abspath(p)
@@ -300,11 +300,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "SAMEORIGIN")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
         try:
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
             pass
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
 
     def log_message(self, *args):
         pass
@@ -313,7 +323,12 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Zenith Dashboard HTTP Server")
     parser.add_argument("--host", default=os.environ.get("HOST", "0.0.0.0"),
                         help="Host to bind to (default: 0.0.0.0 or HOST env var)")
-    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8080")),
+    port_default = os.environ.get("PORT", "8080")
+    try:
+        port_default = int(port_default)
+    except (ValueError, TypeError):
+        port_default = 8080
+    parser.add_argument("--port", type=int, default=port_default,
                         help="Port to bind to (default: 8080 or PORT env var)")
     parser.add_argument("--db", default=None,
                         help="Path to sessions.db (defaults to auto-detection or SESSIONS_DB env)")

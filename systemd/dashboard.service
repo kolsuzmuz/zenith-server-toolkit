@@ -13,6 +13,7 @@ User=YOUR_USER
 WorkingDirectory=/path/to/zenith-server-toolkit/site
 Environment="HOST=0.0.0.0"
 Environment="PORT=8080"
+Environment="PYTHONDONTWRITEBYTECODE=1"
 EnvironmentFile=-/etc/default/zenith-dashboard
 ExecStart=/usr/bin/python3 /path/to/zenith-server-toolkit/site/server.py
 Restart=always
