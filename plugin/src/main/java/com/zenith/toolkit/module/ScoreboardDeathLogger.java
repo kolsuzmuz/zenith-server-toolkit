@@ -29,6 +29,7 @@ public class ScoreboardDeathLogger extends Module {
     private final TrackedBoard kills = new TrackedBoard(Path.of("scoreboard_kills.log"));
     private volatile boolean started = false;
     private volatile boolean scoreboardsFullyDiscovered = false;
+    private java.util.Set<String> lastKnownObjectives = null;
 
     @Override
     public boolean enabledSetting() {
@@ -127,6 +128,12 @@ public class ScoreboardDeathLogger extends Module {
         var cached = cache.getCachedObjectives();
         if (cached == null || cached.isEmpty()) return;
 
+        var currentKeys = cached.keySet();
+        if (lastKnownObjectives != null && lastKnownObjectives.equals(currentKeys)) {
+            return;
+        }
+        lastKnownObjectives = new java.util.HashSet<>(currentKeys);
+
         boolean updated = false;
         int limit = Math.max(1, cfg.maxDiscoveredScoreboards);
 
@@ -164,7 +171,9 @@ public class ScoreboardDeathLogger extends Module {
             } catch (IOException e) {
                 Files.move(tmp, configFile, StandardCopyOption.REPLACE_EXISTING);
             }
-        } catch (Throwable ignored) {}
+        } catch (Throwable t) {
+            try { info("ScoreboardDeathLogger: failed to save config: " + t); } catch (Throwable ignored) {}
+        }
     }
 
     private static class TrackedBoard {

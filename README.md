@@ -132,13 +132,13 @@ nohup python3 scripts/import_sessions.py --loop > /dev/null 2>&1 &
 ### 3. Launch Web Dashboard
 Start the dashboard directly or install it as a systemd service:
 ```bash
-# Option A: Run directly in terminal
+# Option A: Run directly in terminal (binds to 127.0.0.1 by default; pass --host 0.0.0.0 to expose externally)
 python3 site/server.py
 
 # Option B: Install as a permanent background service (1-command)
 sudo ./scripts/setup_service.sh
 ```
-*Open `http://<YOUR_VDS_IP>:8080` in your browser.*
+*Open `http://127.0.0.1:8080` in your browser (or use reverse proxy / tunnel, or pass `--host 0.0.0.0` to expose externally).*
 
 ### 4. Enable Watchdog (Crash Recovery)
 Add to your crontab (`crontab -e`):
@@ -158,7 +158,7 @@ Hooks into ZenithProxy's event bus without affecting network throughput:
 - **`ChatStatsBot`:** Parses public chat messages, increments message counters, updates playtime and join records, and answers player commands.
 
 ### 2. Session Ingestion Daemon (`import_sessions.py`)
-Reads `sessions.log` incrementally using persistent byte offsets, writing clean, indexed rows into `sessions.db` (SQLite). Supports crash detection, bot reconnection handling, and open session reconciliation.
+Reads `sessions.log` incrementally using persistent byte offsets, writing clean, indexed rows into `sessions.db` (SQLite). Supports crash detection, bot reconnection handling, open session reconciliation, and optional data retention management (`--retention-days N` to purge raw events older than N days).
 
 ### 3. Web Dashboard & API (`server.py`)
 Lightweight, multi-threaded Python HTTP server using standard libraries (`http.server`, `sqlite3`). Queries aggregated player activity over variable time buckets and caches responses for high performance.
@@ -281,13 +281,13 @@ The dashboard provides a responsive dark-mode interface built with Chart.js.
 python3 site/server.py
 ```
 Options supported:
-- `--host`: Bind address (default: `0.0.0.0` or `HOST` environment variable)
+- `--host`: Bind address (default: `127.0.0.1` or `HOST` environment variable; pass `--host 0.0.0.0` to expose externally)
 - `--port`: HTTP port (default: `8080` or `PORT` environment variable)
 - `--db`: Direct path to `sessions.db` (auto-detected across common locations if omitted)
 
 ```bash
 # Example with custom settings
-python3 site/server.py --host 127.0.0.1 --port 9000 --db /opt/zenithproxy/sessions.db
+python3 site/server.py --host 0.0.0.0 --port 9000 --db /opt/zenithproxy/sessions.db
 ```
 
 ---
@@ -422,7 +422,7 @@ When ZenithProxy releases an update for a new Minecraft version:
 ## Security Best Practices
 
 1. **Keep Dry-Run Mode Active Initially:** Verify that chat messages parse cleanly in your console before creating `chatbot_reply.enabled`.
-2. **Protect the Web Dashboard:** By default, `server.py` binds to `0.0.0.0:8080`. For production servers:
+2. **Protect the Web Dashboard:** By default, `server.py` binds securely to `127.0.0.1:8080` (localhost only). To expose it publicly or across network interfaces, pass `--host 0.0.0.0` (or pass `0.0.0.0` as the second argument to `setup_service.sh`). For production servers:
    - Use a **Cloudflare Tunnel** (`cloudflared`) to avoid exposing public ports in your firewall.
    - Or configure an **Nginx reverse proxy** with SSL (`certbot`) and HTTP Basic Authentication.
 3. **Database Security:** `server.py` queries `sessions.db` strictly in read-only URI mode (`mode=ro`), preventing accidental SQL injection or database locks.

@@ -10,7 +10,7 @@ import os
 import sqlite3
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TOOLKIT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
@@ -72,6 +72,7 @@ def parse_args():
     parser.add_argument("--db", default=None, help="Path to sessions.db (default: auto-detect)")
     parser.add_argument("--loop", action="store_true", help="Run continuously every 30 seconds")
     parser.add_argument("--interval", type=int, default=30, help="Interval in seconds for loop mode")
+    parser.add_argument("--retention-days", type=int, default=0, help="Retention period in days for events (default: 0, disabled)")
     return parser.parse_args()
 
 def init_db(con):
@@ -97,6 +98,19 @@ def get_offset(con):
 
 def set_offset(con, o):
     con.execute("INSERT OR REPLACE INTO meta VALUES('offset',?)", (str(o),))
+
+def get_inode(con):
+    r = con.execute("SELECT v FROM meta WHERE k='inode'").fetchone()
+    return int(r[0]) if r and r[0].isdigit() else None
+
+def set_inode(con, inode):
+    con.execute("INSERT OR REPLACE INTO meta VALUES('inode',?)", (str(inode),))
+
+def purge_retention(con, days):
+    if days <= 0:
+        return
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    con.execute("DELETE FROM events WHERE ts < ?", (cutoff,))
 
 def parse(ts):
     return datetime.fromisoformat(ts)
@@ -150,9 +164,17 @@ def run_once(con, log_path):
     if not os.path.exists(log_path):
         return 0
     off = get_offset(con)
+    stored_inode = get_inode(con)
+    current_inode = None
     try:
-        file_size = os.path.getsize(log_path)
-        if off > file_size:
+        st = os.stat(log_path)
+        file_size = st.st_size
+        current_inode = st.st_ino
+        if stored_inode is not None and current_inode != stored_inode:
+            print(f"[*] Log rotation detected (inode changed from {stored_inode} to {current_inode}), resetting offset to 0.", file=sys.stderr)
+            off = 0
+        elif off > file_size:
+            print(f"[*] Log truncation detected (offset {off} > size {file_size}), resetting offset to 0.", file=sys.stderr)
             off = 0
     except OSError:
         off = 0
@@ -170,6 +192,8 @@ def run_once(con, log_path):
             off = f.tell()
             n += 1
     set_offset(con, off)
+    if current_inode is not None:
+        set_inode(con, current_inode)
     con.commit()
     return n
 
@@ -196,11 +220,28 @@ def main():
                 if n > 0:
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] Imported {n} events into {db_path}")
             except Exception as e:
+                con.rollback()
                 print(f"[!] Importer error: {e}", file=sys.stderr)
+            if args.retention_days > 0:
+                try:
+                    purge_retention(con, args.retention_days)
+                    con.commit()
+                except Exception as e:
+                    con.rollback()
+                    print(f"[!] Retention purge error: {e}", file=sys.stderr)
             time.sleep(args.interval)
     else:
-        n = run_once(con, log_path)
-        print(f"Imported {n} events into {db_path}.")
+        try:
+            n = run_once(con, log_path)
+            if args.retention_days > 0:
+                purge_retention(con, args.retention_days)
+                con.commit()
+                con.execute("VACUUM")
+            print(f"Imported {n} events into {db_path}.")
+        except Exception as e:
+            con.rollback()
+            print(f"[!] Importer error: {e}", file=sys.stderr)
+            raise
 
 if __name__ == "__main__":
     main()

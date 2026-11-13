@@ -10,7 +10,7 @@ SITE_DIR="${TOOLKIT_ROOT}/site"
 SERVER_SCRIPT="${SITE_DIR}/server.py"
 
 # Detect Python 3
-PYTHON_BIN="$(which python3 2>/dev/null || true)"
+PYTHON_BIN="$(command -v python3 2>/dev/null || true)"
 if [ -z "$PYTHON_BIN" ]; then
     echo "[-] Error: python3 not found in PATH." >&2
     exit 1
@@ -21,13 +21,14 @@ EXEC_USER="${SUDO_USER:-$(id -un)}"
 
 # Detect port, host, and optional database override
 PORT="${1:-${PORT:-8080}}"
-HOST="${2:-${HOST:-0.0.0.0}}"
+HOST="${2:-${HOST:-127.0.0.1}}"
 
 # Safely expand DB_PATH if provided (e.g. ~/zenithproxy/sessions.db -> /home/user/zenithproxy/sessions.db)
 if [ -n "${3:-${SESSIONS_DB:-}}" ]; then
     RAW_DB="${3:-${SESSIONS_DB:-}}"
     if [[ "$RAW_DB" == "~"* ]]; then
-        USER_HOME="$(eval echo "~${EXEC_USER}")"
+        USER_HOME="$(getent passwd "$EXEC_USER" 2>/dev/null | cut -d: -f6)"
+        [ -z "$USER_HOME" ] && USER_HOME="$HOME"
         DB_PATH="${USER_HOME}${RAW_DB:1}"
     else
         DB_PATH="$(readlink -f "$RAW_DB" 2>/dev/null || realpath "$RAW_DB" 2>/dev/null || echo "$RAW_DB")"
