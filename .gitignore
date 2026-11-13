@@ -1,0 +1,46 @@
+# Gradle & Java
+.gradle/
+build/
+bin/
+*.class
+*.jar
+!plugin/gradle/wrapper/gradle-wrapper.jar
+
+# Logs and runtime data
+*.log
+*.log.*
+*.tsv
+*.tsv.*
+*.db
+*.db-*
+*.tmp
+*.bak
+chatbot_reply.enabled
+
+# Sensitive & Configuration files
+config.json
+mc_auth_cache.json
+*.conf
+*.key
+*.token
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# Generated systemd units
+systemd/zenith-dashboard.service
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db

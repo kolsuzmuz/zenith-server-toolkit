@@ -1,0 +1,30 @@
+# Systemd service unit template for Zenith Dashboard
+# TIP: You can automatically configure and install this service on any VDS by running:
+#      sudo ./scripts/setup_service.sh
+
+[Unit]
+Description=Zenith Dashboard - Player Count Web Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/path/to/zenith-server-toolkit/site
+Environment="HOST=0.0.0.0"
+Environment="PORT=8080"
+EnvironmentFile=-/etc/default/zenith-dashboard
+ExecStart=/usr/bin/python3 /path/to/zenith-server-toolkit/site/server.py
+Restart=always
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+MemoryMax=80M
+CPUQuota=30%
+
+[Install]
+WantedBy=multi-user.target

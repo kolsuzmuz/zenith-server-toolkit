@@ -1,0 +1,38 @@
+name: Bug Report
+description: Create a report to help us improve the toolkit
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report an issue! Please provide as much detail as possible.
+  - type: input
+    id: version
+    attributes:
+      label: Toolkit & Minecraft Version
+      description: What version of ZenithServerToolkit and Minecraft are you running?
+      placeholder: e.g., ZenithServerToolkit 1.0.0, Minecraft 1.21 / 26.4.0
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating System / Environment
+      description: What Linux distribution is your VDS running?
+      placeholder: e.g., Ubuntu 24.04 LTS, Debian 12
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs & Console Output
+      description: Please paste any relevant proxy, Python, or systemd log lines.
+      render: shell
