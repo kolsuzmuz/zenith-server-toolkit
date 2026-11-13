@@ -417,6 +417,9 @@ When ZenithProxy releases an update for a new Minecraft version:
    ```
 6. Restart ZenithProxy.
 
+> [!NOTE]
+> The Gradle build depends on `-SNAPSHOT` artifacts from `maven.2b2t.vc` and is therefore not reproducible.
+
 ---
 
 ## Security Best Practices
