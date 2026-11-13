@@ -11,7 +11,7 @@ Wants=network-online.target
 Type=simple
 User=YOUR_USER
 WorkingDirectory=/path/to/zenith-server-toolkit/site
-Environment="HOST=0.0.0.0"
+Environment="HOST=127.0.0.1"
 Environment="PORT=8080"
 Environment="PYTHONDONTWRITEBYTECODE=1"
 EnvironmentFile=-/etc/default/zenith-dashboard

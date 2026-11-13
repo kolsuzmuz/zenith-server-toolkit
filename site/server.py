@@ -96,7 +96,7 @@ def compute(span):
                 "FROM events WHERE kind='HEARTBEAT' AND ts >= ?", (iso(start),)).fetchall()
     except Exception as e:
         print(f"[!] SQLite query error ({db_path}): {e}", file=sys.stderr)
-        return {"step": step, "points": [], "db_found": True}
+        return {"step": step, "points": [], "db_found": True, "error": str(e)}
 
     sums = [0.0] * n
     cnt = [0] * n
@@ -118,7 +118,7 @@ PAGE = """<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Player Count Dashboard</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7" integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC" crossorigin="anonymous"></script>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -207,9 +207,13 @@ PAGE = """<!doctype html>
         if (!hasValidPoints) {
           canvas.style.display = 'none';
           statusMsg.style.display = 'block';
-          statusMsg.textContent = data.db_found === false 
-            ? 'Database file (sessions.db) not found or no data recorded yet.'
-            : 'No player heartbeat data recorded in this time range.';
+          if (data.error) {
+            statusMsg.textContent = `Database error: ${data.error}`;
+          } else {
+            statusMsg.textContent = data.db_found === false 
+              ? 'Database file (sessions.db) not found or no data recorded yet.'
+              : 'No player heartbeat data recorded in this time range.';
+          }
           if (chart) { chart.destroy(); chart = null; }
           return;
         }
@@ -276,7 +280,7 @@ PAGE = """<!doctype html>
 """
 
 class DashboardHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
+    def _get_response_data(self):
         u = urlparse(self.path)
         if u.path == "/api":
             r = parse_qs(u.query).get("range", ["1d"])[0]
@@ -288,22 +292,36 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 with cache_lock:
                     hit = (time.time(), json.dumps(data).encode())
                     cache[span] = hit
-            body, ctype = hit[1], "application/json"
+            return 200, hit[1], "application/json"
         elif u.path == "/":
-            body, ctype = PAGE.encode(), "text/html; charset=utf-8"
+            return 200, PAGE.encode(), "text/html; charset=utf-8"
         else:
-            self.send_error(404)
-            return
+            return 404, None, None
 
-        self.send_response(200)
+    def _send_common_headers(self, status, ctype, length):
+        self.send_response(status)
         self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Length", str(length))
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "SAMEORIGIN")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
+
+    def do_HEAD(self):
+        status, body, ctype = self._get_response_data()
+        if status != 200:
+            self.send_error(status)
+            return
+        self._send_common_headers(200, ctype, len(body))
+
+    def do_GET(self):
+        status, body, ctype = self._get_response_data()
+        if status != 200:
+            self.send_error(status)
+            return
+        self._send_common_headers(200, ctype, len(body))
         try:
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
@@ -316,13 +334,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
-    def log_message(self, *args):
-        pass
+    def log_message(self, format, *args):
+        # Only log requests/errors with status code >= 400
+        if args and len(args) > 1:
+            code_str = str(args[1])
+            if code_str.isdigit() and int(code_str) < 400:
+                return
+        elif args and len(args) > 0 and str(args[0]).isdigit():
+            if int(str(args[0])) < 400:
+                return
+        sys.stderr.write("%s - - [%s] %s\n" %
+                         (self.address_string(),
+                          self.log_date_time_string(),
+                          format % args))
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Zenith Dashboard HTTP Server")
-    parser.add_argument("--host", default=os.environ.get("HOST", "0.0.0.0"),
-                        help="Host to bind to (default: 0.0.0.0 or HOST env var)")
+    parser.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"),
+                        help="Host to bind to (default: 127.0.0.1 or HOST env var)")
     port_default = os.environ.get("PORT", "8080")
     try:
         port_default = int(port_default)

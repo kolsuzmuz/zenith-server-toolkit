@@ -54,10 +54,14 @@ public class SessionLogger extends Module {
         return ISO_FMT.format(Instant.ofEpochMilli(millis).atOffset(ZoneOffset.UTC));
     }
 
-    private void write(long millis, String uuid, String name, String kind) {
-        String line = ts(millis) + "|" + uuid + "|" + name + "|" + kind + "\n";
+    private static void appendLine(StringBuilder sb, long millis, String uuid, String name, String kind) {
+        sb.append(ts(millis)).append("|").append(uuid).append("|").append(name).append("|").append(kind).append("\n");
+    }
+
+    private void flush(StringBuilder sb) {
+        if (sb.length() == 0) return;
         try {
-            Files.writeString(FILE, line, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            Files.writeString(FILE, sb.toString(), StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -74,17 +78,20 @@ public class SessionLogger extends Module {
                 current.put(e.getProfileId(), e.getName());
             }
 
+            StringBuilder sb = new StringBuilder();
+
             // If the list is completely empty, the bot got disconnected; do not mark everyone as LEAVE
             if (current.isEmpty()) {
                 if (!wasEmpty) {
-                    write(now, "", "", "BOT_DISCONNECT");
+                    appendLine(sb, now, "", "", "BOT_DISCONNECT");
                     known.clear();
+                    flush(sb);
                 }
                 wasEmpty = true;
                 return;
             }
             if (wasEmpty) {
-                write(now, "", "", "SNAPSHOT_START");
+                appendLine(sb, now, "", "", "SNAPSHOT_START");
                 known.clear();
                 snapshotUntil = now + SETTLE_MS;
                 wasEmpty = false;
@@ -92,22 +99,24 @@ public class SessionLogger extends Module {
 
             if (now - lastBeat > 60_000) {
                 lastBeat = now;
-                write(now, "", String.valueOf(current.size()), "HEARTBEAT");
+                appendLine(sb, now, "", String.valueOf(current.size()), "HEARTBEAT");
             }
 
             boolean snapshot = now < snapshotUntil;
             for (var c : current.entrySet()) {
                 if (!known.containsKey(c.getKey())) {
-                    write(now, c.getKey().toString(), c.getValue(), snapshot ? "SNAPSHOT" : "JOIN");
+                    appendLine(sb, now, c.getKey().toString(), c.getValue(), snapshot ? "SNAPSHOT" : "JOIN");
                 }
             }
             for (var k : known.entrySet()) {
                 if (!current.containsKey(k.getKey())) {
-                    write(now, k.getKey().toString(), k.getValue(), "LEAVE");
+                    appendLine(sb, now, k.getKey().toString(), k.getValue(), "LEAVE");
                 }
             }
             known.clear();
             known.putAll(current);
+
+            flush(sb);
         } catch (Throwable t) {
             try { info("SessionLogger ERROR: " + t); } catch (Throwable ignored) {}
             t.printStackTrace();

@@ -205,16 +205,18 @@ public class ChatStatsBot extends Module {
     }
 
     private void save() {
-        try (java.io.BufferedWriter w = Files.newBufferedWriter(TMP_FILE)) {
-            synchronized (lock) {
-                w.write("#v2 uuid|name|first|last|msgs|joins|play|sess|oldnames\n");
-                w.write("#lastTick|" + lastTick + "\n");
-                for (P p : all) {
-                    w.write(p.uuid + "|" + p.name + "|" + p.first + "|" + p.last + "|"
-                        + p.msgs + "|" + p.joins + "|" + p.play + "|" + p.sess + "|"
-                        + String.join(",", p.oldNames) + "\n");
-                }
+        StringBuilder sb = new StringBuilder();
+        synchronized (lock) {
+            sb.append("#v2 uuid|name|first|last|msgs|joins|play|sess|oldnames\n");
+            sb.append("#lastTick|").append(lastTick).append("\n");
+            for (P p : all) {
+                sb.append(p.uuid).append("|").append(p.name).append("|").append(p.first).append("|").append(p.last).append("|")
+                    .append(p.msgs).append("|").append(p.joins).append("|").append(p.play).append("|").append(p.sess).append("|")
+                    .append(String.join(",", p.oldNames)).append("\n");
             }
+        }
+        try {
+            Files.writeString(TMP_FILE, sb.toString());
         } catch (IOException e) {
             e.printStackTrace();
             return;
@@ -257,47 +259,48 @@ public class ChatStatsBot extends Module {
                     if (!wasEmpty) {
                         closeAllOpen(lastTick > 0 ? lastTick : now);
                         known.clear();
+                        doSave = true;
                     }
                     wasEmpty = true;
-                    return;
-                }
-                if (wasEmpty) {
+                } else {
+                    if (wasEmpty) {
+                        known.clear();
+                        wasEmpty = false;
+                        snapshotUntil = now + SETTLE_SEC;
+                    }
+                    boolean snapshot = now < snapshotUntil;
+
+                    for (var c : cur.entrySet()) {
+                        if (known.containsKey(c.getKey())) continue;
+                        P p = resolve(c.getKey(), c.getValue(), now);
+                        if (p == null) continue;
+                        p.last = now;
+                        if (snapshot) {
+                            if (p.sess == 0) p.sess = now;
+                        } else {
+                            p.joins++;
+                            p.sess = now;
+                        }
+                    }
+                    for (var k : known.entrySet()) {
+                        if (cur.containsKey(k.getKey())) continue;
+                        P p = byUuid.get(k.getKey().toString());
+                        if (p == null) p = byName.get(k.getValue().toLowerCase());
+                        if (p == null) continue;
+                        if (p.sess > 0) {
+                            p.play += Math.max(0, now - p.sess);
+                            p.sess = 0;
+                        }
+                        p.last = now;
+                    }
                     known.clear();
-                    wasEmpty = false;
-                    snapshotUntil = now + SETTLE_SEC;
-                }
-                boolean snapshot = now < snapshotUntil;
+                    known.putAll(cur);
+                    lastTick = now;
 
-                for (var c : cur.entrySet()) {
-                    if (known.containsKey(c.getKey())) continue;
-                    P p = resolve(c.getKey(), c.getValue(), now);
-                    if (p == null) continue;
-                    p.last = now;
-                    if (snapshot) {
-                        if (p.sess == 0) p.sess = now;
-                    } else {
-                        p.joins++;
-                        p.sess = now;
+                    if (now - lastSave >= SAVE_EVERY_SEC) {
+                        lastSave = now;
+                        doSave = true;
                     }
-                }
-                for (var k : known.entrySet()) {
-                    if (cur.containsKey(k.getKey())) continue;
-                    P p = byUuid.get(k.getKey().toString());
-                    if (p == null) p = byName.get(k.getValue().toLowerCase());
-                    if (p == null) continue;
-                    if (p.sess > 0) {
-                        p.play += Math.max(0, now - p.sess);
-                        p.sess = 0;
-                    }
-                    p.last = now;
-                }
-                known.clear();
-                known.putAll(cur);
-                lastTick = now;
-
-                if (now - lastSave >= SAVE_EVERY_SEC) {
-                    lastSave = now;
-                    doSave = true;
                 }
             }
             if (doSave) save();

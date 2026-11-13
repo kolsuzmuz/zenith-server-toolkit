@@ -276,9 +276,9 @@ The `/api` endpoint automatically attaches `Access-Control-Allow-Origin: *` head
 ```bash
 python3 site/server.py
 ```
-Open `http://<YOUR_VDS_IP>:8080` in your browser.
+By default, the server binds securely to `127.0.0.1:8080` (localhost only). Open `http://localhost:8080` in your browser (or access via reverse proxy / SSH tunnel).
 
-Custom flags (e.g. changing port or database):
+To expose the dashboard on all network interfaces, pass `--host 0.0.0.0`:
 ```bash
 python3 site/server.py --port 8080 --host 0.0.0.0 --db /path/to/sessions.db
 ```
@@ -289,9 +289,9 @@ A helper script automates systemd unit creation on any VDS:
 ```bash
 sudo ./scripts/setup_service.sh
 ```
-This detects your active user, Python 3 path, and repository directory, installs `/etc/systemd/system/zenith-dashboard.service`, reloads systemd, and starts the service. You can also specify a custom port or database path:
+This detects your active user, Python 3 path, and repository directory, installs `/etc/systemd/system/zenith-dashboard.service` (binding to `127.0.0.1` by default), reloads systemd, and starts the service. You can also specify a custom port, host, or database path:
 ```bash
-# Example with custom port and custom DB location (tilde '~' is safely expanded)
+# Example with custom port, host (0.0.0.0), and custom DB location (tilde '~' is safely expanded)
 sudo ./scripts/setup_service.sh 8085 0.0.0.0 ~/zenithproxy/sessions.db
 ```
 
