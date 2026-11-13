@@ -43,6 +43,9 @@ public class ChatStatsBot extends Module {
     private static final long USER_COOLDOWN_MS = 8000;
     private static final long SETTLE_SEC = 10;
     private static final long SAVE_EVERY_SEC = 30;
+    private static final java.util.Set<String> COMMANDS = java.util.Set.of(
+        "seed", "help", "commands", "top", "joindate", "jd", "lastseen", "ls", "playtime", "pt",
+        "message", "messages", "msg", "deaths", "kills", "info", "inf", "i", "stats");
 
     private static final class P {
         String uuid = "";
@@ -354,8 +357,9 @@ public class ChatStatsBot extends Module {
     private void handleCommand(String sender, String text) {
         String[] parts = text.substring(1).trim().split("\\s+");
         if (parts.length == 0 || parts[0].isEmpty()) return;
-        if (!tryAcquireCooldown(sender)) return;
         String cmd = parts[0].toLowerCase();
+        if (!COMMANDS.contains(cmd)) return;
+        if (!tryAcquireCooldown(sender)) return;
         String reply = buildReply(cmd, parts, sender);
         if (reply != null) sendReply(sender, reply);
     }

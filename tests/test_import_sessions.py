@@ -145,6 +145,51 @@ def test_stored_offset_prevents_duplicate_import():
             if os.path.exists(log_path):
                 os.remove(log_path)
 
+def test_inode_change_does_not_duplicate_existing_events():
+    with tempfile.NamedTemporaryFile(suffix=".db") as db_file, tempfile.TemporaryDirectory() as tmp_dir:
+        log_path = os.path.join(tmp_dir, "sessions.log")
+        con = sqlite3.connect(db_file.name)
+        init_db(con)
+
+        content = (
+            "2026-01-01T12:00:00+00:00|uuid1|Player1|JOIN\n"
+            "2026-01-01T12:05:00+00:00|uuid1|Player1|LEAVE\n"
+        )
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        n1 = run_once(con, log_path)
+        assert n1 == 2
+        ev_count1 = con.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        sess_count1 = con.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+        assert ev_count1 == 2
+        assert sess_count1 == 1
+
+        # Re-create file at same path (simulating sed -i or replacement -> new inode)
+        os.remove(log_path)
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        # run_once again: should detect inode change, but skip lines <= MAX(ts)
+        n2 = run_once(con, log_path)
+        assert n2 == 0
+        ev_count2 = con.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        sess_count2 = con.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+        assert ev_count2 == ev_count1
+        assert sess_count2 == sess_count1
+
+        # Append one new newer line
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write("2026-01-01T12:10:00+00:00|uuid2|Player2|JOIN\n")
+
+        n3 = run_once(con, log_path)
+        assert n3 == 1
+        ev_count3 = con.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        sess_count3 = con.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+        assert ev_count3 == ev_count1 + 1
+        assert sess_count3 == sess_count1 + 1
+        con.close()
+
 if __name__ == "__main__":
     test_join_leave_produces_closed_session()
     test_duplicate_join_does_not_create_second_open_session()
@@ -152,4 +197,5 @@ if __name__ == "__main__":
     test_snapshot_start_closes_open_sessions_with_crash()
     test_trailing_line_without_newline_not_consumed()
     test_stored_offset_prevents_duplicate_import()
+    test_inode_change_does_not_duplicate_existing_events()
     print("All import_sessions tests passed!")

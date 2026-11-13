@@ -96,7 +96,7 @@ def compute(span):
                 "FROM events WHERE kind='HEARTBEAT' AND ts >= ?", (iso(start),)).fetchall()
     except Exception as e:
         print(f"[!] SQLite query error ({db_path}): {e}", file=sys.stderr)
-        return {"step": step, "points": [], "db_found": True, "error": str(e)}
+        return {"step": step, "points": [], "db_found": True, "error": "database query failed"}
 
     sums = [0.0] * n
     cnt = [0] * n
@@ -118,7 +118,7 @@ PAGE = """<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Player Count Dashboard</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7" integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.js" integrity="sha384-zYPBGXwO4633CABX/5Spf6emCKUJCfoOkhOMYyxMsatqQZPnDblmmOewfjsIVWCM" crossorigin="anonymous"></script>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;

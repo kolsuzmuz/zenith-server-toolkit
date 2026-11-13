@@ -89,18 +89,51 @@ EOF
 }
 
 generate_importer_unit() {
-    local rw_paths="${TOOLKIT_ROOT}"
+    local target_dir=""
     if [ -n "$DB_PATH" ]; then
-        rw_paths="${rw_paths} $(dirname "$DB_PATH")"
+        target_dir="$(dirname "$DB_PATH")"
     else
-        USER_HOME="$(getent passwd "$EXEC_USER" 2>/dev/null | cut -d: -f6)"
-        [ -z "$USER_HOME" ] && USER_HOME="$HOME"
-        rw_paths="${rw_paths} ${USER_HOME}/zenithproxy"
+        local candidates=()
+        if [ -n "${SESSIONS_LOG:-}" ]; then
+            candidates+=("$(dirname "$SESSIONS_LOG")")
+        fi
+        for env_key in "${ZENITH_DIR:-}" "${ZENITH_HOME:-}" "${PROXY_DIR:-}"; do
+            if [ -n "$env_key" ]; then
+                candidates+=("$env_key")
+            fi
+        done
+        local u_home
+        u_home="$(getent passwd "$EXEC_USER" 2>/dev/null | cut -d: -f6)"
+        [ -z "$u_home" ] && u_home="$HOME"
+        candidates+=("${u_home}/zenithproxy" "/opt/zenithproxy")
+
+        for c in "${candidates[@]}"; do
+            if [ -d "$c" ]; then
+                target_dir="$c"
+                break
+            fi
+        done
     fi
+
+    local rw_paths=""
+    if [ -d "${TOOLKIT_ROOT}" ]; then
+        rw_paths="${TOOLKIT_ROOT}"
+    fi
+
+    if [ -n "$target_dir" ] && [ -d "$target_dir" ]; then
+        if [ -n "$rw_paths" ]; then
+            rw_paths="${rw_paths} ${target_dir}"
+        else
+            rw_paths="${target_dir}"
+        fi
+    else
+        echo "[!] Warning: Could not locate existing proxy directory for importer ReadWritePaths." >&2
+        echo "    Please specify the database path as the 3rd argument to setup_service.sh" >&2
+    fi
+
     cat <<EOF
 [Unit]
 Description=Zenith Session Importer - Ingests sessions.log into SQLite
-After=network.target
 
 [Service]
 Type=simple
@@ -115,7 +148,7 @@ RestartSec=5
 # Security hardening
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=${rw_paths}
+$( [ -n "$rw_paths" ] && echo "ReadWritePaths=${rw_paths}" )
 PrivateTmp=true
 MemoryMax=80M
 CPUQuota=30%

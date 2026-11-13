@@ -115,6 +115,12 @@ def purge_retention(con, days):
 def parse(ts):
     return datetime.fromisoformat(ts)
 
+def normalize_ts(ts):
+    try:
+        return parse(ts).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    except Exception:
+        return ts
+
 def close_session(con, row_id, join_ts, ts, kind):
     try:
         secs = max(0, int((parse(ts) - parse(join_ts)).total_seconds()))
@@ -133,10 +139,7 @@ def handle_line(con, line):
     if len(parts) < 4:
         return
     ts, uuid, name, kind = parts[0], parts[1], parts[2], parts[3]
-    try:
-        ts = parse(ts).strftime("%Y-%m-%dT%H:%M:%S+00:00")
-    except Exception:
-        pass
+    ts = normalize_ts(ts)
     con.execute("INSERT INTO events(ts,uuid,name,kind) VALUES(?,?,?,?)",
                 (ts, uuid, name, kind))
 
@@ -166,6 +169,8 @@ def run_once(con, log_path):
     off = get_offset(con)
     stored_inode = get_inode(con)
     current_inode = None
+    skip_until = None
+    reset_occurred = False
     try:
         st = os.stat(log_path)
         file_size = st.st_size
@@ -173,11 +178,19 @@ def run_once(con, log_path):
         if stored_inode is not None and current_inode != stored_inode:
             print(f"[*] Log rotation detected (inode changed from {stored_inode} to {current_inode}), resetting offset to 0.", file=sys.stderr)
             off = 0
+            reset_occurred = True
         elif off > file_size:
             print(f"[*] Log truncation detected (offset {off} > size {file_size}), resetting offset to 0.", file=sys.stderr)
             off = 0
+            reset_occurred = True
     except OSError:
         off = 0
+
+    if reset_occurred:
+        row = con.execute("SELECT MAX(ts) FROM events").fetchone()
+        if row and row[0]:
+            skip_until = row[0]
+
     n = 0
     with open(log_path, "rb") as f:
         f.seek(off)
@@ -185,12 +198,20 @@ def run_once(con, log_path):
             raw = f.readline()
             if not raw or not raw.endswith(b"\n"):
                 break
+            line_str = raw.decode("utf-8", "replace")
+            if skip_until:
+                parts = line_str.rstrip("\n").split("|")
+                if parts and len(parts) >= 1:
+                    norm_ts = normalize_ts(parts[0])
+                    if norm_ts <= skip_until:
+                        off = f.tell()
+                        continue
             try:
-                handle_line(con, raw.decode("utf-8", "replace"))
+                handle_line(con, line_str)
+                n += 1
             except Exception as e:
                 print(f"[!] Error handling line: {e}", file=sys.stderr)
             off = f.tell()
-            n += 1
     set_offset(con, off)
     if current_inode is not None:
         set_inode(con, current_inode)
@@ -214,6 +235,7 @@ def main():
 
     if args.loop:
         print(f"[*] Starting background loop (checking every {args.interval}s)...")
+        last_purge = 0
         while True:
             try:
                 n = run_once(con, log_path)
@@ -222,10 +244,12 @@ def main():
             except Exception as e:
                 con.rollback()
                 print(f"[!] Importer error: {e}", file=sys.stderr)
-            if args.retention_days > 0:
+            now = time.time()
+            if args.retention_days > 0 and (now - last_purge >= 3600):
                 try:
                     purge_retention(con, args.retention_days)
                     con.commit()
+                    last_purge = now
                 except Exception as e:
                     con.rollback()
                     print(f"[!] Retention purge error: {e}", file=sys.stderr)
