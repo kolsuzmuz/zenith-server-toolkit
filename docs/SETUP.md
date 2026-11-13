@@ -248,12 +248,28 @@ rm ~/zenithproxy/chatbot_reply.enabled
 
 The plugin logs raw events to `sessions.log`. The Python ingestion daemon (`import_sessions.py`) parses this stream into an indexed SQLite database (`sessions.db`).
 
-### Manual Execution
+### Production Systemd Service (Recommended)
+Running the importer as a systemd service ensures automatic restarts, security sandboxing, and persistent logging:
+
+**Option A: Automated setup with dashboard installer:**
 ```bash
-python3 scripts/import_sessions.py
+sudo ./scripts/setup_service.sh --with-importer
 ```
 
+**Option B: Manual systemd service installation:**
+1. Copy the unit template:
+   ```bash
+   sudo cp systemd/importer.service /etc/systemd/system/zenith-importer.service
+   ```
+2. Edit `/etc/systemd/system/zenith-importer.service` to match your `User=` and path locations.
+3. Enable and start:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now zenith-importer.service
+   ```
+
 ### Persistent Background Execution (nohup)
+If systemd is not available on your environment:
 ```bash
 nohup python3 scripts/import_sessions.py --loop > /dev/null 2>&1 &
 ```
@@ -262,6 +278,11 @@ nohup python3 scripts/import_sessions.py --loop > /dev/null 2>&1 &
 Add an entry to crontab (`crontab -e`):
 ```cron
 @reboot nohup python3 $HOME/zenith-server-toolkit/scripts/import_sessions.py --loop > /dev/null 2>&1 &
+```
+
+### Manual Execution (One-Shot)
+```bash
+python3 scripts/import_sessions.py
 ```
 
 ---
