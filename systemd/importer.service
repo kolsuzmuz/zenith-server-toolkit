@@ -3,7 +3,6 @@
 
 [Unit]
 Description=Zenith Session Importer - Ingests sessions.log into SQLite
-After=network.target
 
 [Service]
 Type=simple

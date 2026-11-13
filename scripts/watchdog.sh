@@ -92,6 +92,13 @@ if is_proxy_running; then
     exit 0
 fi
 
+# Re-check maintenance switch in case it was created during settling delay
+if [ -f "${PROXY_DIR}/watchdog.disabled" ]; then
+    mkdir -p "$(dirname "${LOG_FILE}")" 2>/dev/null || true
+    echo "$(date '+%Y-%m-%d %H:%M:%S') Maintenance mode: ${PROXY_DIR}/watchdog.disabled found, skipping restart." >> "${LOG_FILE}"
+    exit 0
+fi
+
 mkdir -p "$(dirname "${LOG_FILE}")" 2>/dev/null || true
 echo "$(date '+%Y-%m-%d %H:%M:%S') Proxy process not detected, restarting in ${PROXY_DIR}..." >> "${LOG_FILE}"
 
