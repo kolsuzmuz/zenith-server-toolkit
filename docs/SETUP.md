@@ -395,6 +395,16 @@ The watchdog script (`scripts/watchdog.sh`) ensures ZenithProxy automatically re
 
 *The `flock` utility prevents duplicate watchdog executions if a restart takes longer than 5 minutes. The script requires `tmux` and checks for its availability before running.*
 
+### Maintenance Mode
+To temporarily disable watchdog auto-restart during intentional maintenance or server updates, create a `watchdog.disabled` file in your proxy directory:
+```bash
+touch ~/zenithproxy/watchdog.disabled
+```
+When present, the watchdog logs a message and exits immediately (before the settling delay). Remove the file when maintenance is complete to resume automatic recovery:
+```bash
+rm -f ~/zenithproxy/watchdog.disabled
+```
+
 ---
 
 ## 11. Automated Daily Backups
