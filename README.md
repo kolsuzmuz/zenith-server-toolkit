@@ -126,6 +126,15 @@ cd ~/zenith-server-toolkit
 ### 2. Start Session Data Importer
 Run the background importer (converts `sessions.log` into SQLite `sessions.db`):
 ```bash
+# Option A: Run as a background service via systemd (recommended)
+# Automatically install both dashboard and importer services:
+sudo ./scripts/setup_service.sh --with-importer
+
+# Or copy and configure the template manually:
+# sudo cp systemd/importer.service /etc/systemd/system/zenith-importer.service
+# sudo systemctl daemon-reload && sudo systemctl enable --now zenith-importer.service
+
+# Option B: Run via nohup
 nohup python3 scripts/import_sessions.py --loop > /dev/null 2>&1 &
 ```
 
@@ -311,18 +320,18 @@ Host: your-vds-ip:8080
 #### Response Example
 ```json
 {
-  "step": 360,
+  "step": 420,
   "points": [
     [1773410000, 18],
-    [1773410360, 22],
-    [1773410720, 25],
-    [1773411080, null]
+    [1773410420, 22],
+    [1773410840, 25],
+    [1773411260, null]
   ],
   "db_found": true
 }
 ```
-- `step`: Time resolution in seconds per bucket.
-- `points`: Array of `[unix_timestamp, average_player_count]` pairs. `null` indicates no heartbeat was recorded during that bucket.
+- `step`: Time resolution in seconds per bucket (default `1d` range computes a 420-second step).
+- `points`: Array of `[unix_timestamp, average_player_count]` pairs (the proxy bot account itself is excluded via `count - 1`). `null` indicates no heartbeat was recorded during that bucket.
 - `db_found`: `true` if `sessions.db` was located and queried successfully.
 
 ---
@@ -391,7 +400,8 @@ zenith-server-toolkit/
 ├── site/                        # Web Dashboard
 │   └── server.py                # Standalone HTTP dashboard & JSON API server
 ├── systemd/
-│   └── dashboard.service        # Systemd unit template
+│   ├── dashboard.service        # Systemd unit template (setup_service.sh generates git-ignored zenith-dashboard.service)
+│   └── importer.service         # Systemd unit template for background session ingestion daemon
 └── LICENSE                      # GNU AGPLv3 License
 ```
 

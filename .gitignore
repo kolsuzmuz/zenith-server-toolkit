@@ -34,6 +34,7 @@ venv/
 
 # Generated systemd units
 systemd/zenith-dashboard.service
+systemd/zenith-importer.service
 
 # IDE
 .idea/
