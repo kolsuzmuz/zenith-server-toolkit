@@ -76,6 +76,13 @@ if is_proxy_running; then
     exit 0
 fi
 
+# Maintenance switch: exit cleanly if disabled before settling delay
+if [ -f "${PROXY_DIR}/watchdog.disabled" ]; then
+    mkdir -p "$(dirname "${LOG_FILE}")" 2>/dev/null || true
+    echo "$(date '+%Y-%m-%d %H:%M:%S') Maintenance mode: ${PROXY_DIR}/watchdog.disabled found, skipping restart." >> "${LOG_FILE}"
+    exit 0
+fi
+
 # Inform user if running in terminal and wait to prevent false alarms during updates
 echo "[*] Proxy process not detected. Waiting ${CHECK_DELAY}s settling delay before restart..."
 sleep "${CHECK_DELAY}"
@@ -113,9 +120,26 @@ tmux has-session -t "${TMUX_SESSION}" 2>/dev/null || tmux new-session -d -s "${T
 # Launch proxy inside tmux session
 tmux send-keys -t "${TMUX_SESSION}" "cd \"${PROXY_DIR}\" && ${LAUNCH_CMD}; exec bash" C-m
 
-if [ -n "${CONNECT_CMD}" ] && [ "${CONNECT_DELAY}" -gt 0 ]; then
-    sleep "${CONNECT_DELAY}"
-    tmux send-keys -t "${TMUX_SESSION}" "${CONNECT_CMD}" C-m
+# Verify proxy process actually started (poll for up to ~30s)
+started=false
+for i in {1..15}; do
+    sleep 2
+    if is_proxy_running; then
+        started=true
+        break
+    fi
+done
+
+if [ "$started" = false ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') ERROR: proxy did not start" >> "${LOG_FILE}"
+    exit 1
 fi
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') Proxy restarted successfully in tmux session '${TMUX_SESSION}' (Command: ${LAUNCH_CMD})" >> "${LOG_FILE}"
+
+if [ -n "${CONNECT_CMD}" ] && [ "${CONNECT_DELAY}" -gt 0 ]; then
+    sleep "${CONNECT_DELAY}"
+    if is_proxy_running; then
+        tmux send-keys -t "${TMUX_SESSION}" "${CONNECT_CMD}" C-m
+    fi
+fi

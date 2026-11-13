@@ -349,6 +349,7 @@ The watchdog script (`scripts/watchdog.sh`) ensures your monitoring bot never st
 - Launches the proxy inside a persistent `tmux` session named `proxy_server`.
 - Automatically sends the `connect` command to the proxy console after startup.
 - Dynamically finds proxy folders, launch scripts, and Java `.jar` files.
+- **Maintenance Switch:** Creating a file named `watchdog.disabled` in the proxy directory (`touch watchdog.disabled`) halts watchdog auto-restart before the settling delay, allowing manual maintenance. Remove the file to re-enable watchdog.
 
 ### Crontab Installation
 ```bash

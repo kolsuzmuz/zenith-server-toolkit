@@ -106,30 +106,87 @@ echo "[*] Repository source: $REPO"
 
 downloaded=false
 TEMP_JAR="${TARGET_DIR}/.ZenithServerToolkit-download.tmp"
+GH_TEMP_DIR=""
 FINAL_JAR=""
+
+cleanup() {
+    rm -f "${TEMP_JAR:-}"
+    if [ -n "${GH_TEMP_DIR:-}" ] && [ -d "${GH_TEMP_DIR}" ]; then
+        rm -rf "${GH_TEMP_DIR}"
+    fi
+}
+trap cleanup EXIT
 
 # Helper to find the latest release asset URL from GitHub API
 detect_latest_release_url() {
     local api_url="https://api.github.com/repos/${REPO}/releases/latest"
-    local found_url=""
-    if command -v curl >/dev/null 2>&1; then
-        found_url="$(curl -fsSL "$api_url" 2>/dev/null | grep -o 'https://github.com/[^"]*/releases/download/[^"]*/ZenithServerToolkit[^"]*\.jar' | head -n 1 || true)"
-    elif command -v wget >/dev/null 2>&1; then
-        found_url="$(wget -qO- "$api_url" 2>/dev/null | grep -o 'https://github.com/[^"]*/releases/download/[^"]*/ZenithServerToolkit[^"]*\.jar' | head -n 1 || true)"
+    local json_content=""
+    local auth_header=()
+    local wget_auth=()
+
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+        auth_header=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+        wget_auth=(--header="Authorization: Bearer ${GITHUB_TOKEN}")
     fi
-    echo "$found_url"
+
+    if command -v curl >/dev/null 2>&1; then
+        json_content="$(curl -fsSL "${auth_header[@]}" "$api_url" 2>/dev/null || true)"
+    elif command -v wget >/dev/null 2>&1; then
+        json_content="$(wget -qO- "${wget_auth[@]}" "$api_url" 2>/dev/null || true)"
+    fi
+
+    if [ -z "$json_content" ]; then
+        return 0
+    fi
+
+    local matching_urls=""
+    if command -v jq >/dev/null 2>&1; then
+        matching_urls="$(echo "$json_content" | jq -r '.assets[]?.browser_download_url // empty' 2>/dev/null | grep 'ZenithServerToolkit.*\.jar$' | grep -v -- '-sources\.jar$' || true)"
+    elif command -v python3 >/dev/null 2>&1; then
+        matching_urls="$(echo "$json_content" | python3 -c '
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    for a in data.get("assets", []):
+        u = a.get("browser_download_url", "")
+        if u.endswith(".jar") and "ZenithServerToolkit" in u and not u.endswith("-sources.jar"):
+            print(u)
+except Exception:
+    pass
+' 2>/dev/null || true)"
+    else
+        matching_urls="$(echo "$json_content" | grep -o 'https://github\.com/[^"]*/releases/download/[^"]*/ZenithServerToolkit[^"]*\.jar' | grep -v -- '-sources\.jar' || true)"
+    fi
+
+    if [ -n "$matching_urls" ]; then
+        echo "$matching_urls" | sort -V | tail -n 1
+    fi
 }
 
 # Method 1: GitHub CLI (gh)
 if command -v gh >/dev/null 2>&1; then
     echo "[*] Attempting download via gh CLI..."
-    if gh release download latest -R "$REPO" -p "*.jar" -D "$TARGET_DIR" --clobber 2>/dev/null; then
-        downloaded=true
-        FINAL_JAR="$(find "$TARGET_DIR" -maxdepth 1 -name "ZenithServerToolkit*.jar" ! -name "*-sources.jar" | head -n 1 || true)"
-    elif gh run download -R "$REPO" -n zenith-server-toolkit-jar --dir "$TARGET_DIR" 2>/dev/null; then
-        downloaded=true
-        FINAL_JAR="$(find "$TARGET_DIR" -maxdepth 1 -name "ZenithServerToolkit*.jar" ! -name "*-sources.jar" | head -n 1 || true)"
+    GH_TEMP_DIR="$(mktemp -d)"
+    if gh release download latest -R "$REPO" -p "*.jar" -D "$GH_TEMP_DIR" --clobber 2>/dev/null; then
+        CANDIDATE_JAR="$(find "$GH_TEMP_DIR" -maxdepth 1 -name "ZenithServerToolkit*.jar" ! -name "*-sources.jar" | sort -V | tail -n 1 || true)"
+        if [ -n "$CANDIDATE_JAR" ] && [ -f "$CANDIDATE_JAR" ]; then
+            rm -f "${TARGET_DIR}"/ZenithServerToolkit*.jar
+            mv "$CANDIDATE_JAR" "$TARGET_DIR/"
+            FINAL_JAR="${TARGET_DIR}/$(basename "$CANDIDATE_JAR")"
+            downloaded=true
+        fi
     fi
+    if [ "$downloaded" = false ] && gh run download -R "$REPO" -n zenith-server-toolkit-jar --dir "$GH_TEMP_DIR" 2>/dev/null; then
+        CANDIDATE_JAR="$(find "$GH_TEMP_DIR" -name "ZenithServerToolkit*.jar" ! -name "*-sources.jar" | sort -V | tail -n 1 || true)"
+        if [ -n "$CANDIDATE_JAR" ] && [ -f "$CANDIDATE_JAR" ]; then
+            rm -f "${TARGET_DIR}"/ZenithServerToolkit*.jar
+            mv "$CANDIDATE_JAR" "$TARGET_DIR/"
+            FINAL_JAR="${TARGET_DIR}/$(basename "$CANDIDATE_JAR")"
+            downloaded=true
+        fi
+    fi
+    rm -rf "$GH_TEMP_DIR"
+    GH_TEMP_DIR=""
 fi
 
 # Method 2: cURL / Wget with dynamic asset detection from GitHub API / latest redirect
@@ -137,31 +194,31 @@ if [ "$downloaded" = false ]; then
     echo "[*] Detecting latest release asset from GitHub..."
     RELEASE_URL="$(detect_latest_release_url)"
 
-    # Fallback to standard release naming if API rate-limited
     if [ -z "$RELEASE_URL" ]; then
-        RELEASE_URL="https://github.com/${REPO}/releases/latest/download/ZenithServerToolkit-1.0.0.jar"
-    fi
+        echo "[-] Error: Could not query GitHub API for release assets (possibly rate-limited)." >&2
+        echo "    Set GITHUB_TOKEN environment variable with a personal access token and retry." >&2
+    else
+        JAR_NAME="$(basename "$RELEASE_URL")"
+        FINAL_JAR="${TARGET_DIR}/${JAR_NAME}"
 
-    JAR_NAME="$(basename "$RELEASE_URL")"
-    FINAL_JAR="${TARGET_DIR}/${JAR_NAME}"
-
-    if command -v curl >/dev/null 2>&1; then
-        echo "[*] Downloading via curl from ${RELEASE_URL}..."
-        if curl -fsSL "$RELEASE_URL" -o "$TEMP_JAR" 2>/dev/null; then
-            # Clean up any existing ZenithServerToolkit jars to prevent duplicate version conflicts
-            rm -f "${TARGET_DIR}"/ZenithServerToolkit*.jar
-            mv "$TEMP_JAR" "$FINAL_JAR"
-            downloaded=true
+        if command -v curl >/dev/null 2>&1; then
+            echo "[*] Downloading via curl from ${RELEASE_URL}..."
+            if curl -fsSL "$RELEASE_URL" -o "$TEMP_JAR" 2>/dev/null; then
+                # Clean up any existing ZenithServerToolkit jars to prevent duplicate version conflicts
+                rm -f "${TARGET_DIR}"/ZenithServerToolkit*.jar
+                mv "$TEMP_JAR" "$FINAL_JAR"
+                downloaded=true
+            fi
+        elif command -v wget >/dev/null 2>&1; then
+            echo "[*] Downloading via wget from ${RELEASE_URL}..."
+            if wget -q "$RELEASE_URL" -O "$TEMP_JAR" 2>/dev/null; then
+                rm -f "${TARGET_DIR}"/ZenithServerToolkit*.jar
+                mv "$TEMP_JAR" "$FINAL_JAR"
+                downloaded=true
+            fi
         fi
-    elif command -v wget >/dev/null 2>&1; then
-        echo "[*] Downloading via wget from ${RELEASE_URL}..."
-        if wget -q "$RELEASE_URL" -O "$TEMP_JAR" 2>/dev/null; then
-            rm -f "${TARGET_DIR}"/ZenithServerToolkit*.jar
-            mv "$TEMP_JAR" "$FINAL_JAR"
-            downloaded=true
-        fi
+        rm -f "$TEMP_JAR"
     fi
-    rm -f "$TEMP_JAR"
 fi
 
 # Method 3: Local build artifact fallback if found

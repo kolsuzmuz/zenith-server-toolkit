@@ -335,9 +335,23 @@ public class ChatStatsBot extends Module {
         }
     }
 
+    private boolean tryAcquireCooldown(String sender) {
+        long nowMs = System.currentTimeMillis();
+        synchronized (lock) {
+            if (nowMs - lastReplyMs < GLOBAL_COOLDOWN_MS) return false;
+            Long last = userLast.get(sender.toLowerCase());
+            if (last != null && nowMs - last < USER_COOLDOWN_MS) return false;
+            lastReplyMs = nowMs;
+            if (userLast.size() > 1000) userLast.clear();
+            userLast.put(sender.toLowerCase(), nowMs);
+            return true;
+        }
+    }
+
     private void handleCommand(String sender, String text) {
         String[] parts = text.substring(1).trim().split("\\s+");
         if (parts.length == 0 || parts[0].isEmpty()) return;
+        if (!tryAcquireCooldown(sender)) return;
         String cmd = parts[0].toLowerCase();
         String reply = buildReply(cmd, parts, sender);
         if (reply != null) sendReply(sender, reply);
@@ -349,8 +363,8 @@ public class ChatStatsBot extends Module {
             return "World seed: " + seed;
         }
         if (cmd.equals("help") || cmd.equals("commands")) {
-            return "Commands: !joindate/!jd, !info/!inf/!i, !deaths, !kills, !playtime/!pt, "
-                + "!message/!messages/!msg, !top kills/deaths/messages/playtime, !seed";
+            return "Commands: !joindate/!jd, !lastseen/!ls, !info/!inf/!i, !deaths, !kills, "
+                + "!playtime/!pt, !message/!messages/!msg, !top kills/deaths/messages/playtime, !seed";
         }
         if (cmd.equals("top")) return top(parts.length > 1 ? parts[1].toLowerCase() : "");
 
@@ -446,14 +460,7 @@ public class ChatStatsBot extends Module {
         if (out.length() > 200) out = out.substring(0, 200);
         if (out.isEmpty() || out.startsWith("/") || out.startsWith("!")) return;
 
-        long nowMs = System.currentTimeMillis();
         synchronized (lock) {
-            if (nowMs - lastReplyMs < GLOBAL_COOLDOWN_MS) return;
-            Long last = userLast.get(sender.toLowerCase());
-            if (last != null && nowMs - last < USER_COOLDOWN_MS) return;
-            lastReplyMs = nowMs;
-            if (userLast.size() > 1000) userLast.clear();
-            userLast.put(sender.toLowerCase(), nowMs);
             recentReplies.addLast(out);
             while (recentReplies.size() > 20) recentReplies.removeFirst();
         }
@@ -485,16 +492,13 @@ public class ChatStatsBot extends Module {
     }
 
     private static List<String> readLines(Path path) {
-        for (int i = 0; i < 4; i++) {
-            try {
-                List<String> l = Files.readAllLines(path);
-                if (!l.isEmpty()) return l;
-            } catch (java.nio.file.NoSuchFileException e) {
-                return null;
-            } catch (IOException ignored) {}
-            try { Thread.sleep(150); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); return null; }
+        try {
+            return Files.readAllLines(path);
+        } catch (java.nio.file.NoSuchFileException e) {
+            return null;
+        } catch (IOException ignored) {
+            return null;
         }
-        return null;
     }
 
     private static Integer lookup(Path path, String target) {

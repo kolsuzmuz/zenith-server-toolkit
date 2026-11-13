@@ -56,7 +56,7 @@ def resolve_paths(cli_log=None, cli_db=None):
     resolved_db = None
     if cli_db:
         resolved_db = os.path.abspath(cli_db)
-    elif "SESSIONS_DB" in os.environ:
+    elif os.environ.get("SESSIONS_DB"):
         resolved_db = os.path.abspath(os.environ["SESSIONS_DB"])
     elif resolved_log and os.path.exists(resolved_log):
         # Place database in the same directory as the log file by default
