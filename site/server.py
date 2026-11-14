@@ -11,6 +11,7 @@ import json
 import os
 import sqlite3
 import sys
+import socket
 import threading
 import time
 from datetime import datetime, timezone
@@ -336,19 +337,47 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
     def __init__(self, server_address, RequestHandlerClass, max_workers=16):
         super().__init__(server_address, RequestHandlerClass)
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="dashboard-http")
+        # cap queued + running connections; extra ones are dropped instead of piling up
+        self._slots = threading.BoundedSemaphore(max_workers * 8)
+
+    def _run(self, request, client_address):
+        try:
+            self.process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
 
     def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            self.close_request(request)
+            return
         try:
-            self._executor.submit(self.process_request_thread, request, client_address)
+            self._executor.submit(self._run, request, client_address)
         except RuntimeError:
+            self._slots.release()
             self.close_request(request)
 
     def server_close(self):
         super().server_close()
         self._executor.shutdown(wait=False, cancel_futures=True)
-
 class DashboardHandler(BaseHTTPRequestHandler):
-    timeout = 10  # seconds; drop idle/stalled client sockets instead of holding a thread forever
+    timeout = 10        # per-read timeout
+    MAX_LIFETIME = 15   # hard cap for the whole connection (stops trickle/slowloris)
+
+    def setup(self):
+        super().setup()
+        self._killer = threading.Timer(self.MAX_LIFETIME, self._abort)
+        self._killer.daemon = True
+        self._killer.start()
+
+    def finish(self):
+        self._killer.cancel()
+        super().finish()
+
+    def _abort(self):
+        try:
+            self.connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
     def _get_response_data(self):
         u = urlparse(self.path)
         if u.path in ("/api", "/api/"):
