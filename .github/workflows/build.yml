@@ -80,12 +80,20 @@ jobs:
           name: zenith-server-toolkit-jar
           path: release-jars
 
+      - name: Generate SHA-256 checksums
+        run: |
+          cd release-jars
+          sha256sum *.jar > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Update GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: latest
           name: Latest Build
           prerelease: false
-          files: release-jars/*.jar
+          files: |
+            release-jars/*.jar
+            release-jars/SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
