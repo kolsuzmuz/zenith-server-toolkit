@@ -26,6 +26,7 @@ public class SessionLogger extends Module {
     private static final Path FILE = Path.of("sessions.log");
     private static final long SETTLE_MS = 10_000;
     private static final DateTimeFormatter ISO_FMT = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss'+00:00'");
+    private static final java.util.regex.Pattern SAFE_NAME = java.util.regex.Pattern.compile("^[A-Za-z0-9_.]{1,32}$");
 
     private final Map<UUID, String> known = new HashMap<>();
     private volatile boolean started = false;
@@ -55,6 +56,9 @@ public class SessionLogger extends Module {
     }
 
     private static void appendLine(StringBuilder sb, long millis, String uuid, String name, String kind) {
+                // Empty name = control events; otherwise it must look like a username (or a HEARTBEAT count).
+        // This keeps '|' and line breaks out of the line-oriented log.
+        if (!name.isEmpty() && !SAFE_NAME.matcher(name).matches()) return;
         sb.append(ts(millis)).append("|").append(uuid).append("|").append(name).append("|").append(kind).append("\n");
     }
 
