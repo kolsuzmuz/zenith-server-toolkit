@@ -53,7 +53,10 @@ public class ScoreboardDeathLogger extends Module {
 
     private static String cleanName(String name) {
         if (name == null) return null;
-        String clean = name.replaceAll("§[0-9a-fk-orA-FK-OR]", "").trim();
+        String clean = name.replaceAll("§[0-9a-fk-orA-FK-OR]", "")
+                           .replaceAll("\\p{Cntrl}", "")
+                           .trim();
+        if (clean.length() > 64) clean = clean.substring(0, 64);
         return clean.isEmpty() ? null : clean;
     }
 
