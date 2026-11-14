@@ -28,7 +28,12 @@ for arg in "$@"; do
 done
 
 # Detect execution user
-EXEC_USER="${SUDO_USER:-$(id -un)}"
+EXEC_USER="${ZENITH_SERVICE_USER:-${SUDO_USER:-$(id -un)}}"
+if [ "$EXEC_USER" = "root" ]; then
+    echo "[!] WARNING: the services will run as root." >&2
+    echo "    Prefer a normal user: run this script with 'sudo' from that user's account," >&2
+    echo "    or set ZENITH_SERVICE_USER=<user> (that user must be able to read/write the proxy folder)." >&2
+fi
 
 # Detect port, host, and optional database override
 PORT="${POSITIONAL_ARGS[0]:-${PORT:-8080}}"
@@ -118,6 +123,7 @@ ProtectHome=read-only
 PrivateTmp=true
 MemoryMax=80M
 CPUQuota=30%
+TasksMax=64
 
 [Install]
 WantedBy=multi-user.target
