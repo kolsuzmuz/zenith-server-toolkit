@@ -306,7 +306,7 @@ python3 site/server.py --host 0.0.0.0 --port 9000 --db /opt/zenithproxy/sessions
 The dashboard exposes an integrated JSON API endpoint for external integrations (e.g. Discord bots, status websites).
 
 > [!TIP]
-> **Cross-Origin Resource Sharing (CORS):** The `/api` endpoint automatically attaches `Access-Control-Allow-Origin: *` and supports HTTP `OPTIONS` pre-flight requests. You can fetch player data directly from browser client applications or cross-domain status dashboards without CORS proxy workarounds.
+> **Cross-Origin Resource Sharing (CORS):** CORS is disabled by default (the built-in page uses same-origin requests). To let another site read `/api`, add `CORS_ORIGIN=https://your.site` (or `*` for any origin) to `/etc/default/zenith-dashboard` and restart the service.
 
 #### Request
 ```http
