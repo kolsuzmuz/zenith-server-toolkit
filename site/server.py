@@ -21,6 +21,9 @@ TOOLKIT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 
 DB_OVERRIDE = None
 
+# CORS is off by default (same-origin only). Set CORS_ORIGIN=https://your.site (or "*") to allow cross-origin reads.
+CORS_ORIGIN = os.environ.get("CORS_ORIGIN", "").strip()
+
 def resolve_db():
     """
     Dynamically finds sessions.db across environment variables,
@@ -280,6 +283,7 @@ PAGE = """<!doctype html>
 """
 
 class DashboardHandler(BaseHTTPRequestHandler):
+    timeout = 10  # seconds; drop idle/stalled client sockets instead of holding a thread forever
     def _get_response_data(self):
         u = urlparse(self.path)
         if u.path == "/api":
@@ -297,16 +301,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return 200, PAGE.encode(), "text/html; charset=utf-8"
         else:
             return 404, None, None
-
+            
+    def _send_cors_headers(self):
+        if CORS_ORIGIN:
+            self.send_header("Access-Control-Allow-Origin", CORS_ORIGIN)
+            self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Vary", "Origin")
     def _send_common_headers(self, status, ctype, length):
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(length))
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "SAMEORIGIN")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self._send_cors_headers()
         self.end_headers()
 
     def do_HEAD(self):
@@ -329,9 +337,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self._send_cors_headers()
         self.end_headers()
 
     def log_message(self, format, *args):
