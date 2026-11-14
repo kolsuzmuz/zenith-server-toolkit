@@ -48,6 +48,42 @@ else
     DB_PATH=""
 fi
 
+discover_proxy_dir() {
+    local candidates=()
+    if [ -n "${SESSIONS_LOG:-}" ]; then
+        candidates+=("$(dirname "$SESSIONS_LOG")")
+    fi
+    for env_key in "${ZENITH_DIR:-}" "${ZENITH_HOME:-}" "${PROXY_DIR:-}"; do
+        if [ -n "$env_key" ]; then
+            candidates+=("$env_key")
+        fi
+    done
+    local u_home
+    u_home="$(getent passwd "$EXEC_USER" 2>/dev/null | cut -d: -f6)"
+    [ -z "$u_home" ] && u_home="$HOME"
+    candidates+=("${u_home}/zenithproxy" "/opt/zenithproxy")
+
+    for c in "${candidates[@]}"; do
+        if [ -d "$c" ]; then
+            echo "$c"
+            return 0
+        fi
+    done
+    return 1
+}
+
+target_dir=""
+importer_log_env=""
+if [ -n "$DB_PATH" ]; then
+    target_dir="$(dirname "$DB_PATH")"
+else
+    target_dir="$(discover_proxy_dir 2>/dev/null || true)"
+    if [ -n "$target_dir" ]; then
+        DB_PATH="${target_dir}/sessions.db"
+        importer_log_env="Environment=\"SESSIONS_LOG=${target_dir}/sessions.log\""
+    fi
+fi
+
 SERVICE_FILE="/etc/systemd/system/zenith-dashboard.service"
 GENERATED_FILE="${TOOLKIT_ROOT}/systemd/zenith-dashboard.service"
 
@@ -89,32 +125,6 @@ EOF
 }
 
 generate_importer_unit() {
-    local target_dir=""
-    if [ -n "$DB_PATH" ]; then
-        target_dir="$(dirname "$DB_PATH")"
-    else
-        local candidates=()
-        if [ -n "${SESSIONS_LOG:-}" ]; then
-            candidates+=("$(dirname "$SESSIONS_LOG")")
-        fi
-        for env_key in "${ZENITH_DIR:-}" "${ZENITH_HOME:-}" "${PROXY_DIR:-}"; do
-            if [ -n "$env_key" ]; then
-                candidates+=("$env_key")
-            fi
-        done
-        local u_home
-        u_home="$(getent passwd "$EXEC_USER" 2>/dev/null | cut -d: -f6)"
-        [ -z "$u_home" ] && u_home="$HOME"
-        candidates+=("${u_home}/zenithproxy" "/opt/zenithproxy")
-
-        for c in "${candidates[@]}"; do
-            if [ -d "$c" ]; then
-                target_dir="$c"
-                break
-            fi
-        done
-    fi
-
     local rw_paths=""
     if [ -d "${TOOLKIT_ROOT}" ]; then
         rw_paths="${TOOLKIT_ROOT}"
@@ -141,6 +151,7 @@ User=${EXEC_USER}
 WorkingDirectory=${TOOLKIT_ROOT}
 Environment="PYTHONDONTWRITEBYTECODE=1"
 $( [ -n "$DB_PATH" ] && echo "Environment=\"SESSIONS_DB=${DB_PATH}\"" )
+$( [ -n "$importer_log_env" ] && echo "$importer_log_env" )
 ExecStart=${PYTHON_BIN} ${IMPORTER_SCRIPT} --loop
 Restart=always
 RestartSec=5
