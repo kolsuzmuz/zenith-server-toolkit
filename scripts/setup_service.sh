@@ -140,6 +140,7 @@ WorkingDirectory=${SITE_DIR}
 Environment="HOST=${HOST}"
 Environment="PORT=${PORT}"
 Environment="PYTHONDONTWRITEBYTECODE=1"
+$( [ -n "${CORS_ORIGIN:-}" ] && echo "Environment=\"CORS_ORIGIN=${CORS_ORIGIN}\"" )
 $( [ -n "$DB_PATH" ] && echo "Environment=\"SESSIONS_DB=${DB_PATH}\"" )
 EnvironmentFile=-/etc/default/zenith-dashboard
 ExecStart=${PYTHON_BIN} ${SERVER_SCRIPT}

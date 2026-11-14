@@ -413,16 +413,24 @@ def parse_args():
                         help="Port to bind to (default: 8080 or PORT env var)")
     parser.add_argument("--db", default=None,
                         help="Path to sessions.db (defaults to auto-detection or SESSIONS_DB env)")
+    parser.add_argument("--cors-origin", default=None,
+                        help="Allowed CORS origin (e.g. '*' or 'https://your.site', default: same-origin or CORS_ORIGIN env)")
     return parser.parse_args()
 
 def main():
-    global DB_OVERRIDE
+    global DB_OVERRIDE, CORS_ORIGIN
     args = parse_args()
     if args.db:
         DB_OVERRIDE = args.db
+    if args.cors_origin is not None:
+        CORS_ORIGIN = args.cors_origin.strip()
 
     db = resolve_db()
     print(f"[*] Starting dashboard on http://{args.host}:{args.port}")
+    if CORS_ORIGIN:
+        print(f"[*] CORS enabled for origin: {CORS_ORIGIN}")
+    else:
+        print("[*] CORS disabled (same-origin only)")
     print(f"[*] Active sessions database: {db} {'(Found)' if os.path.exists(db) else '(Waiting for creation)'}")
 
     server = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
