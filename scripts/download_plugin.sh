@@ -110,7 +110,7 @@ GH_TEMP_DIR=""
 FINAL_JAR=""
 
 cleanup() {
-    rm -f "${TEMP_JAR:-}"
+    rm -f "${TEMP_JAR:-}" "${TEMP_SUMS:-}"
     if [ -n "${GH_TEMP_DIR:-}" ] && [ -d "${GH_TEMP_DIR}" ]; then
         rm -rf "${GH_TEMP_DIR}"
     fi
@@ -130,9 +130,9 @@ detect_latest_release_url() {
     fi
 
     if command -v curl >/dev/null 2>&1; then
-        json_content="$(curl -fsSL "${auth_header[@]}" "$api_url" 2>/dev/null || true)"
+        json_content="$(curl -fsSL ${auth_header[@]+"${auth_header[@]}"} "$api_url" 2>/dev/null || true)"
     elif command -v wget >/dev/null 2>&1; then
-        json_content="$(wget -qO- "${wget_auth[@]}" "$api_url" 2>/dev/null || true)"
+        json_content="$(wget -qO- ${wget_auth[@]+"${wget_auth[@]}"} "$api_url" 2>/dev/null || true)"
     fi
 
     if [ -z "$json_content" ]; then
@@ -163,33 +163,63 @@ except Exception:
     fi
 }
 
+# Download helper: fetch <url> <output-file>
+fetch() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$1" -o "$2"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q "$1" -O "$2"
+    else
+        return 1
+    fi
+}
+
+# Verify <jar> against a SHA256SUMS file (lines: "<sha256>  <filename>")
+verify_jar() {
+    local jar="$1" name="$2" sums="$3" expected actual
+    if ! command -v sha256sum >/dev/null 2>&1; then
+        echo "[-] sha256sum not found; cannot verify the download." >&2
+        return 1
+    fi
+    expected="$(awk -v n="$name" '{f=$2; sub(/^\*/, "", f)} f==n {print $1; exit}' "$sums" || true)"
+    if [ -z "$expected" ]; then
+        echo "[-] No checksum entry for ${name} in SHA256SUMS." >&2
+        return 1
+    fi
+    actual="$(sha256sum "$jar" | awk '{print $1}')"
+    if [ "$expected" != "$actual" ]; then
+        echo "[-] Checksum MISMATCH for ${name}" >&2
+        echo "    expected: ${expected}" >&2
+        echo "    actual:   ${actual}" >&2
+        return 1
+    fi
+    echo "[+] Checksum OK (${name})"
+}
+
 # Method 1: GitHub CLI (gh)
 if command -v gh >/dev/null 2>&1; then
     echo "[*] Attempting download via gh CLI..."
     GH_TEMP_DIR="$(mktemp -d)"
-    if gh release download latest -R "$REPO" -p "*.jar" -D "$GH_TEMP_DIR" --clobber 2>/dev/null; then
+    if gh release download latest -R "$REPO" -p "*.jar" -p "SHA256SUMS" -D "$GH_TEMP_DIR" --clobber; then
         CANDIDATE_JAR="$(find "$GH_TEMP_DIR" -maxdepth 1 -name "ZenithServerToolkit*.jar" ! -name "*-sources.jar" | sort -V | tail -n 1 || true)"
         if [ -n "$CANDIDATE_JAR" ] && [ -f "$CANDIDATE_JAR" ]; then
-            rm -f "${TARGET_DIR}"/ZenithServerToolkit*.jar
-            mv "$CANDIDATE_JAR" "$TARGET_DIR/"
-            FINAL_JAR="${TARGET_DIR}/$(basename "$CANDIDATE_JAR")"
-            downloaded=true
+            if verify_jar "$CANDIDATE_JAR" "$(basename "$CANDIDATE_JAR")" "$GH_TEMP_DIR/SHA256SUMS"; then
+                rm -f "${TARGET_DIR}"/ZenithServerToolkit*.jar
+                mv "$CANDIDATE_JAR" "$TARGET_DIR/"
+                FINAL_JAR="${TARGET_DIR}/$(basename "$CANDIDATE_JAR")"
+                downloaded=true
+            else
+                echo "[-] Refusing to install an unverified jar (gh)." >&2
+            fi
         fi
-    fi
-    if [ "$downloaded" = false ] && gh run download -R "$REPO" -n zenith-server-toolkit-jar --dir "$GH_TEMP_DIR" 2>/dev/null; then
-        CANDIDATE_JAR="$(find "$GH_TEMP_DIR" -name "ZenithServerToolkit*.jar" ! -name "*-sources.jar" | sort -V | tail -n 1 || true)"
-        if [ -n "$CANDIDATE_JAR" ] && [ -f "$CANDIDATE_JAR" ]; then
-            rm -f "${TARGET_DIR}"/ZenithServerToolkit*.jar
-            mv "$CANDIDATE_JAR" "$TARGET_DIR/"
-            FINAL_JAR="${TARGET_DIR}/$(basename "$CANDIDATE_JAR")"
-            downloaded=true
-        fi
+    else
+        echo "[!] gh release download failed, trying curl/wget..." >&2
     fi
     rm -rf "$GH_TEMP_DIR"
     GH_TEMP_DIR=""
 fi
 
-# Method 2: cURL / Wget with dynamic asset detection from GitHub API / latest redirect
+# Method 2: cURL / Wget with dynamic asset detection from GitHub API
 if [ "$downloaded" = false ]; then
     echo "[*] Detecting latest release asset from GitHub..."
     RELEASE_URL="$(detect_latest_release_url)"
@@ -200,24 +230,23 @@ if [ "$downloaded" = false ]; then
     else
         JAR_NAME="$(basename "$RELEASE_URL")"
         FINAL_JAR="${TARGET_DIR}/${JAR_NAME}"
+        SUMS_URL="${RELEASE_URL%/*}/SHA256SUMS"
+        TEMP_SUMS="${TARGET_DIR}/.ZenithServerToolkit-SHA256SUMS.tmp"
 
-        if command -v curl >/dev/null 2>&1; then
-            echo "[*] Downloading via curl from ${RELEASE_URL}..."
-            if curl -fsSL "$RELEASE_URL" -o "$TEMP_JAR" 2>/dev/null; then
-                # Clean up any existing ZenithServerToolkit jars to prevent duplicate version conflicts
+        echo "[*] Downloading ${RELEASE_URL}..."
+        if fetch "$RELEASE_URL" "$TEMP_JAR" && fetch "$SUMS_URL" "$TEMP_SUMS"; then
+            if verify_jar "$TEMP_JAR" "$JAR_NAME" "$TEMP_SUMS"; then
+                # Remove old versions only after the new jar is verified
                 rm -f "${TARGET_DIR}"/ZenithServerToolkit*.jar
                 mv "$TEMP_JAR" "$FINAL_JAR"
                 downloaded=true
+            else
+                echo "[-] Refusing to install an unverified jar." >&2
             fi
-        elif command -v wget >/dev/null 2>&1; then
-            echo "[*] Downloading via wget from ${RELEASE_URL}..."
-            if wget -q "$RELEASE_URL" -O "$TEMP_JAR" 2>/dev/null; then
-                rm -f "${TARGET_DIR}"/ZenithServerToolkit*.jar
-                mv "$TEMP_JAR" "$FINAL_JAR"
-                downloaded=true
-            fi
+        else
+            echo "[-] Download failed (jar or SHA256SUMS)." >&2
         fi
-        rm -f "$TEMP_JAR"
+        rm -f "$TEMP_JAR" "$TEMP_SUMS"
     fi
 fi
 
