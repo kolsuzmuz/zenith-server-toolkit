@@ -367,6 +367,7 @@ public class ChatStatsBot extends Module {
     private String buildReply(String cmd, String[] parts, String sender) {
         if (cmd.equals("seed")) {
             String seed = (ToolkitPlugin.CONFIG != null) ? ToolkitPlugin.CONFIG.chatStatsBot.worldSeed : "0";
+         if (seed == null || seed.isBlank() || seed.equals("0")) return null;
             return "World seed: " + seed;
         }
         if (cmd.equals("help") || cmd.equals("commands")) {
