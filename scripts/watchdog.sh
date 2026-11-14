@@ -66,9 +66,17 @@ if ! command -v tmux >/dev/null 2>&1; then
 fi
 
 is_proxy_running() {
-    # Specifically match the Java proxy process, preventing self-matching if path contains ZenithProxy
-    pgrep -u "$(id -u)" -f "java.*ZenithProxy" >/dev/null 2>&1 || \
-    pgrep -u "$(id -u)" -f "ZenithProxy.*\.jar" >/dev/null 2>&1
+    pgrep -u "$(id -u)" -f "java.*ZenithProxy" >/dev/null 2>&1 && return 0
+    pgrep -u "$(id -u)" -f "ZenithProxy.*\.jar" >/dev/null 2>&1 && return 0
+    local pid cwd real_dir
+    real_dir="$(cd "$PROXY_DIR" && pwd -P)"
+    for pid in $(pgrep -u "$(id -u)" -x java 2>/dev/null || true); do
+        cwd="$(readlink "/proc/${pid}/cwd" 2>/dev/null || true)"
+        if [ "$cwd" = "$real_dir" ]; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 # If proxy is currently running, exit immediately
@@ -124,6 +132,12 @@ LAUNCH_CMD="$(determine_launch_cmd)"
 # Ensure tmux session exists
 tmux has-session -t "${TMUX_SESSION}" 2>/dev/null || tmux new-session -d -s "${TMUX_SESSION}"
 
+# Safety: never type into a pane that is busy (e.g. the proxy console is already running there)
+pane_pid="$(tmux display-message -p -t "${TMUX_SESSION}" '#{pane_pid}' 2>/dev/null || true)"
+if [ -n "$pane_pid" ] && pgrep -P "$pane_pid" >/dev/null 2>&1; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') tmux session '${TMUX_SESSION}' is busy (a program is running in it); NOT typing the launch command." >> "${LOG_FILE}"
+    exit 1
+fi
 # Launch proxy inside tmux session
 tmux send-keys -t "${TMUX_SESSION}" "cd \"${PROXY_DIR}\" && ${LAUNCH_CMD}; exec bash" C-m
 
