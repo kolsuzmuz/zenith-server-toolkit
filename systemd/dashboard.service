@@ -26,6 +26,7 @@ ProtectHome=read-only
 PrivateTmp=true
 MemoryMax=80M
 CPUQuota=30%
+TasksMax=64
 
 [Install]
 WantedBy=multi-user.target
