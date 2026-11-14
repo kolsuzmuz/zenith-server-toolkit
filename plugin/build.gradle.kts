@@ -26,8 +26,16 @@ repositories {
     maven("https://maven.2b2t.vc/remote") {
         description = "Dependencies used by ZenithProxy"
     }
+    mavenCentral()
 }
 
 dependencies {
     zenithProxy("com.zenith:ZenithProxy:$mc-SNAPSHOT")
+    testImplementation(platform("org.junit:junit-bom:5.11.4"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+tasks.withType<Test> {
+    useJUnitPlatform()
 }

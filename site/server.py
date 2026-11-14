@@ -6,6 +6,7 @@ Designed for zero-configuration portability across any Linux VDS.
 """
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import sqlite3
@@ -139,7 +140,7 @@ def compute(span):
         return {"step": step, "points": [], "db_found": False}
 
     try:
-        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5) as con:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=15) as con:
             rows = con.execute(
                 "SELECT CAST(strftime('%s', ts) AS INTEGER), CAST(name AS INTEGER) "
                 "FROM events WHERE kind='HEARTBEAT' AND ts >= ?", (iso(start),)).fetchall()
@@ -328,6 +329,24 @@ PAGE = """<!doctype html>
 </html>
 """
 
+class BoundedThreadingHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, server_address, RequestHandlerClass, max_workers=16):
+        super().__init__(server_address, RequestHandlerClass)
+        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="dashboard-http")
+
+    def process_request(self, request, client_address):
+        try:
+            self._executor.submit(self.process_request_thread, request, client_address)
+        except RuntimeError:
+            self.close_request(request)
+
+    def server_close(self):
+        super().server_close()
+        self._executor.shutdown(wait=False, cancel_futures=True)
+
 class DashboardHandler(BaseHTTPRequestHandler):
     timeout = 10  # seconds; drop idle/stalled client sockets instead of holding a thread forever
     def _get_response_data(self):
@@ -433,11 +452,13 @@ def main():
         print("[*] CORS disabled (same-origin only)")
     print(f"[*] Active sessions database: {db} {'(Found)' if os.path.exists(db) else '(Waiting for creation)'}")
 
-    server = ThreadingHTTPServer((args.host, args.port), DashboardHandler)
+    server = BoundedThreadingHTTPServer((args.host, args.port), DashboardHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\n[*] Server stopped.")
+    finally:
+        server.server_close()
 
 if __name__ == "__main__":
     main()

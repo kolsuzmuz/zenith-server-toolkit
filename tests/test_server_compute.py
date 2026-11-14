@@ -1,15 +1,18 @@
+import json
 import os
 import sqlite3
 import sys
 import tempfile
+import threading
 import time
+import urllib.request
 from pathlib import Path
 
 TOOLKIT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(TOOLKIT_ROOT / "site"))
 
 import server
-from server import compute, iso
+from server import BoundedThreadingHTTPServer, DashboardHandler, compute, iso
 
 def test_missing_db():
     server.DB_OVERRIDE = "/tmp/nonexistent_sessions_db_12345.db"
@@ -35,10 +38,6 @@ def test_compute_bucketing_and_bot_exclusion():
         """)
 
         now = int(time.time())
-        # Insert a heartbeat within a 1-hour span (3600 seconds)
-        # span=3600 -> step = max(120, 3600 // 200 // 60 * 60) = 120
-        # n = 3600 // 120 = 30 buckets
-        # name = "6" -> bot account excluded (6 - 1 = 5)
         ts_heartbeat = iso(now - 60)
         con.execute("INSERT INTO events (ts, uuid, name, kind) VALUES (?, '', '6', 'HEARTBEAT')", (ts_heartbeat,))
         con.commit()
@@ -52,11 +51,9 @@ def test_compute_bucketing_and_bot_exclusion():
         points = res["points"]
         assert len(points) == 30
 
-        # Non-empty bucket has average player count 5
         values = [p[1] for p in points if p[1] is not None]
         assert values == [5]
 
-        # Empty buckets have None
         none_points = [p[1] for p in points if p[1] is None]
         assert len(none_points) == 29
     finally:
@@ -64,7 +61,28 @@ def test_compute_bucketing_and_bot_exclusion():
         if os.path.exists(db_path):
             os.remove(db_path)
 
+def test_bounded_threading_http_server_serves_api():
+    server.DB_OVERRIDE = "/tmp/nonexistent_sessions_db_12345.db"
+    server.cache.clear()
+    httpd = BoundedThreadingHTTPServer(("127.0.0.1", 0), DashboardHandler, max_workers=4)
+    port = httpd.server_address[1]
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api?range=1d", timeout=5) as resp:
+            assert resp.status == 200
+            payload = json.loads(resp.read().decode("utf-8"))
+            assert "step" in payload
+            assert "points" in payload
+            assert payload["db_found"] is False
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        server.DB_OVERRIDE = None
+        server.cache.clear()
+
 if __name__ == "__main__":
     test_missing_db()
     test_compute_bucketing_and_bot_exclusion()
+    test_bounded_threading_http_server_serves_api()
     print("All server compute tests passed!")

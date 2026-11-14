@@ -10,19 +10,22 @@ import org.geysermc.mcprotocollib.protocol.data.game.PlayerListEntry;
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatPacket;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
@@ -44,9 +47,79 @@ public class ChatStatsBot extends Module {
     private static final long USER_COOLDOWN_MS = 8000;
     private static final long SETTLE_SEC = 10;
     private static final long SAVE_EVERY_SEC = 30;
-    private static final java.util.Set<String> COMMANDS = java.util.Set.of(
+    private static final Set<String> COMMANDS = Set.of(
         "seed", "help", "commands", "top", "joindate", "jd", "lastseen", "ls", "playtime", "pt",
         "message", "messages", "msg", "deaths", "kills", "info", "inf", "i", "stats");
+
+    private static final ScoreFileCache DEATHS_CACHE = new ScoreFileCache(DEATHS);
+    private static final ScoreFileCache KILLS_CACHE = new ScoreFileCache(KILLS);
+
+    private static final class ScoreFileCache {
+        private final Path path;
+        private long lastModifiedMs = -1L;
+        private long lastSize = -1L;
+        private Map<String, Integer> byPlayer = Collections.emptyMap();
+        private List<Map.Entry<String, Integer>> sorted = Collections.emptyList();
+
+        ScoreFileCache(Path path) {
+            this.path = path;
+        }
+
+        synchronized boolean refresh() {
+            try {
+                if (!Files.exists(path)) {
+                    lastModifiedMs = -1L;
+                    lastSize = -1L;
+                    byPlayer = Collections.emptyMap();
+                    sorted = Collections.emptyList();
+                    return false;
+                }
+                long mod = Files.getLastModifiedTime(path).toMillis();
+                long size = Files.size(path);
+                if (mod == lastModifiedMs && size == lastSize && !byPlayer.isEmpty()) {
+                    return true;
+                }
+                List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
+                Map<String, Integer> parsed = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+                for (String line : lines) {
+                    int sep = line.lastIndexOf(" : ");
+                    if (sep == -1) continue;
+                    String name = line.substring(0, sep).trim();
+                    if (name.isEmpty()) continue;
+                    try {
+                        int v = Integer.parseInt(line.substring(sep + 3).trim());
+                        parsed.merge(name, v, Math::max);
+                    } catch (NumberFormatException ignored) {}
+                }
+                List<Map.Entry<String, Integer>> list = new ArrayList<>(parsed.entrySet());
+                list.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
+                byPlayer = parsed;
+                sorted = list;
+                lastModifiedMs = mod;
+                lastSize = size;
+                return true;
+            } catch (IOException e) {
+                return !byPlayer.isEmpty();
+            }
+        }
+
+        synchronized Integer lookup(String target) {
+            if (!refresh()) return null;
+            return byPlayer.get(target);
+        }
+
+        synchronized String top(String label, String empty) {
+            if (!refresh()) return empty;
+            StringBuilder sb = new StringBuilder(label);
+            int n = 0;
+            for (var e : sorted) {
+                if (e.getValue() <= 0 || n >= 3) break;
+                if (n++ > 0) sb.append(", ");
+                sb.append(e.getKey()).append(" (").append(e.getValue()).append(")");
+            }
+            return n == 0 ? empty : sb.toString();
+        }
+    }
 
     private static final class P {
         String uuid = "";
@@ -87,6 +160,12 @@ public class ChatStatsBot extends Module {
     private void onTick(ClientBotTick event) {
         if (started) return;
         started = true;
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            synchronized (lock) {
+                if (!loaded || loadFailed) return;
+            }
+            save();
+        }, "ZenithToolkit-ChatStatsSave"));
         info("ChatStatsBot scheduler started");
         Globals.EXECUTOR.scheduleWithFixedDelay(this::poll, 0, 1, TimeUnit.SECONDS);
     }
@@ -348,13 +427,27 @@ public class ChatStatsBot extends Module {
 
     private boolean tryAcquireCooldown(String sender) {
         long nowMs = System.currentTimeMillis();
+        String key = sender.toLowerCase();
         synchronized (lock) {
             if (nowMs - lastReplyMs < GLOBAL_COOLDOWN_MS) return false;
-            Long last = userLast.get(sender.toLowerCase());
+            Long last = userLast.get(key);
             if (last != null && nowMs - last < USER_COOLDOWN_MS) return false;
             lastReplyMs = nowMs;
-            if (userLast.size() > 1000) userLast.clear();
-            userLast.put(sender.toLowerCase(), nowMs);
+            if (userLast.size() > 1000) {
+                userLast.entrySet().removeIf(e -> nowMs - e.getValue() >= USER_COOLDOWN_MS);
+                if (userLast.size() > 1000) {
+                    String oldestKey = null;
+                    long oldestTime = Long.MAX_VALUE;
+                    for (var entry : userLast.entrySet()) {
+                        if (entry.getValue() < oldestTime) {
+                            oldestTime = entry.getValue();
+                            oldestKey = entry.getKey();
+                        }
+                    }
+                    if (oldestKey != null) userLast.remove(oldestKey);
+                }
+            }
+            userLast.put(key, nowMs);
             return true;
         }
     }
@@ -373,7 +466,7 @@ public class ChatStatsBot extends Module {
     private String buildReply(String cmd, String[] parts, String sender) {
         if (cmd.equals("seed")) {
             String seed = (ToolkitPlugin.CONFIG != null) ? ToolkitPlugin.CONFIG.chatStatsBot.worldSeed : "0";
-         if (seed == null || seed.isBlank() || seed.equals("0")) return null;
+            if (seed == null || seed.isBlank() || seed.equals("0")) return null;
             return "World seed: " + seed;
         }
         if (cmd.equals("help") || cmd.equals("commands")) {
@@ -398,16 +491,16 @@ public class ChatStatsBot extends Module {
             case "message": case "messages": case "msg":
                 return withPlayer(target, p -> target + ": " + p.msgs + " messages");
             case "deaths": {
-                Integer d = lookup(DEATHS, target);
+                Integer d = DEATHS_CACHE.lookup(target);
                 return d == null ? "No death record found." : target + ": " + d + " deaths";
             }
             case "kills": {
-                Integer k = lookup(KILLS, target);
+                Integer k = KILLS_CACHE.lookup(target);
                 return k == null ? "No kill record found." : target + ": " + k + " kills";
             }
             case "info": case "inf": case "i": case "stats": {
-                Integer d = lookup(DEATHS, target);
-                Integer k = lookup(KILLS, target);
+                Integer d = DEATHS_CACHE.lookup(target);
+                Integer k = KILLS_CACHE.lookup(target);
                 String dp = d != null ? ", deaths " + d : "";
                 String kp = k != null ? ", kills " + k : "";
                 return withPlayer(target, p -> target + ": " + p.msgs + " messages, joined " + p.joins
@@ -428,8 +521,8 @@ public class ChatStatsBot extends Module {
     }
 
     private String top(String sub) {
-        if (sub.equals("kills")) return topFile("Top kills: ", KILLS, "No kill data available.");
-        if (sub.equals("deaths")) return topFile("Top deaths: ", DEATHS, "No death data available.");
+        if (sub.equals("kills")) return KILLS_CACHE.top("Top kills: ", "No kill data available.");
+        if (sub.equals("deaths")) return DEATHS_CACHE.top("Top deaths: ", "No death data available.");
         long now = System.currentTimeMillis() / 1000;
         if (sub.equals("messages") || sub.equals("msg")) {
             List<Map.Entry<String, Long>> list = new ArrayList<>();
@@ -499,58 +592,9 @@ public class ChatStatsBot extends Module {
         return Instant.ofEpochSecond(epoch).atOffset(ZoneOffset.ofHours(offset)).format(TS_FMT);
     }
 
-    private static String fmtDur(long sec) {
+    static String fmtDur(long sec) {
         long h = sec / 3600;
         long m = (sec % 3600) / 60;
         return h > 0 ? h + "h" + m + "m" : m + "m";
-    }
-
-    private static List<String> readLines(Path path) {
-        try {
-            return Files.readAllLines(path);
-        } catch (java.nio.file.NoSuchFileException e) {
-            return null;
-        } catch (IOException ignored) {
-            return null;
-        }
-    }
-
-    private static Integer lookup(Path path, String target) {
-        List<String> lines = readLines(path);
-        if (lines == null) return null;
-        for (String line : lines) {
-            int sep = line.lastIndexOf(" : ");
-            if (sep == -1) continue;
-            if (line.substring(0, sep).trim().equalsIgnoreCase(target)) {
-                try { return Integer.parseInt(line.substring(sep + 3).trim()); } catch (NumberFormatException ignored) {}
-            }
-        }
-        return null;
-    }
-
-    private static String topFile(String label, Path path, String empty) {
-        List<String> lines = readLines(path);
-        if (lines == null) return empty;
-        Map<String, Integer> best = new java.util.TreeMap<>(String.CASE_INSENSITIVE_ORDER);
-        for (String line : lines) {
-            int sep = line.lastIndexOf(" : ");
-            if (sep == -1) continue;
-            String name = line.substring(0, sep).trim();
-            if (name.isEmpty()) continue;
-            try {
-                int v = Integer.parseInt(line.substring(sep + 3).trim());
-                best.merge(name, v, Math::max);
-            } catch (NumberFormatException ignored) {}
-        }
-        List<Map.Entry<String, Integer>> list = new ArrayList<>(best.entrySet());
-        list.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
-        StringBuilder sb = new StringBuilder(label);
-        int n = 0;
-        for (var e : list) {
-            if (e.getValue() <= 0 || n >= 3) break;
-            if (n++ > 0) sb.append(", ");
-            sb.append(e.getKey()).append(" (").append(e.getValue()).append(")");
-        }
-        return n == 0 ? empty : sb.toString();
     }
 }

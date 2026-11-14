@@ -119,6 +119,8 @@ def parse_args():
     return parser.parse_args()
 
 def init_db(con):
+    con.execute("PRAGMA busy_timeout = 15000;")
+    con.execute("PRAGMA synchronous = NORMAL;")
     con.executescript("""
     CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -283,7 +285,7 @@ def main():
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
 
-    con = sqlite3.connect(db_path)
+    con = sqlite3.connect(db_path, timeout=15.0)
     init_db(con)
 
     print(f"[*] Session Importer initialized:")
