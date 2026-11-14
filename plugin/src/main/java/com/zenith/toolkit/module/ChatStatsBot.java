@@ -422,7 +422,7 @@ public class ChatStatsBot extends Module {
     private String withPlayer(String target, Function<P, String> f) {
         synchronized (lock) {
             P p = find(target);
-            if (p == null) return "No record of " + target + ".";
+            if (p == null) return "No record found.";
             return f.apply(p);
         }
     }
