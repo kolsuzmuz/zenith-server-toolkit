@@ -165,7 +165,7 @@ public class ChatStatsBot extends Module {
         if (!Files.exists(src)) return;
         long tick = 0;
         try {
-            for (String line : Files.readAllLines(src)) {
+            for (String line : new String(Files.readAllBytes(src), StandardCharsets.UTF_8).split("\\r?\\n", -1)) {
                 if (line.startsWith("#lastTick|")) {
                     try { tick = Long.parseLong(line.substring(10).trim()); } catch (NumberFormatException ignored) {}
                     continue;
