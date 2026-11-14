@@ -134,11 +134,19 @@ def close_all_open(con, ts, kind):
             "SELECT id, join_ts FROM sessions WHERE leave_ts IS NULL").fetchall():
         close_session(con, rid, jts, ts, kind)
 
+VALID_KINDS = {"SNAPSHOT_START", "SNAPSHOT", "JOIN", "LEAVE", "BOT_DISCONNECT", "HEARTBEAT"}
+
 def handle_line(con, line):
     parts = line.rstrip("\n").split("|")
-    if len(parts) < 4:
+    if len(parts) != 4:
         return
     ts, uuid, name, kind = parts[0], parts[1], parts[2], parts[3]
+    if kind not in VALID_KINDS:
+        return
+    try:
+        parse(ts)
+    except ValueError:
+        return
     ts = normalize_ts(ts)
     con.execute("INSERT INTO events(ts,uuid,name,kind) VALUES(?,?,?,?)",
                 (ts, uuid, name, kind))
@@ -192,6 +200,8 @@ def run_once(con, log_path):
             skip_until = row[0]
 
     n = 0
+    if not con.in_transaction:
+        con.execute("BEGIN")  # keep events + offset in one transaction; savepoints below nest inside it
     with open(log_path, "rb") as f:
         f.seek(off)
         while True:
@@ -207,9 +217,13 @@ def run_once(con, log_path):
                         off = f.tell()
                         continue
             try:
+                con.execute("SAVEPOINT line")
                 handle_line(con, line_str)
+                con.execute("RELEASE line")
                 n += 1
             except Exception as e:
+                con.execute("ROLLBACK TO line")
+                con.execute("RELEASE line")
                 print(f"[!] Error handling line: {e}", file=sys.stderr)
             off = f.tell()
     set_offset(con, off)
