@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -63,6 +64,7 @@ public class ChatStatsBot extends Module {
     private final Map<String, Long> userLast = new HashMap<>();
     private long lastReplyMs = 0;
     private boolean loaded = false;
+    private volatile boolean loadFailed = false;
     private boolean wasEmpty = true;
     private long snapshotUntil = 0;
     private long lastTick = 0;
@@ -194,6 +196,8 @@ public class ChatStatsBot extends Module {
             }
         } catch (IOException e) {
             e.printStackTrace();
+            loadFailed = true;
+            info("ChatStatsBot: could not read " + src + " (" + e + "). Saving is disabled to protect your existing data; fix the file and restart the proxy.");
         }
         for (P p : all) {
             if (p.sess > 0) {
@@ -208,6 +212,7 @@ public class ChatStatsBot extends Module {
     }
 
     private void save() {
+        if (loadFailed) return;
         StringBuilder sb = new StringBuilder();
         synchronized (lock) {
             sb.append("#v2 uuid|name|first|last|msgs|joins|play|sess|oldnames\n");
@@ -359,6 +364,7 @@ public class ChatStatsBot extends Module {
         if (parts.length == 0 || parts[0].isEmpty()) return;
         String cmd = parts[0].toLowerCase();
         if (!COMMANDS.contains(cmd)) return;
+        if (cmd.equals("seed") && buildReply("seed", parts, sender) == null) return;
         if (!tryAcquireCooldown(sender)) return;
         String reply = buildReply(cmd, parts, sender);
         if (reply != null) sendReply(sender, reply);
@@ -382,7 +388,7 @@ public class ChatStatsBot extends Module {
 
         switch (cmd) {
             case "joindate": case "jd":
-                return withPlayer(target, p -> p.first == 0 ? "No record of " + target + "."
+                return withPlayer(target, p -> p.first == 0 ? "No record found."
                     : target + " first seen: " + fmtTs(p.first));
             case "lastseen": case "ls":
                 return withPlayer(target, p -> p.sess > 0 ? target + " is online now"
@@ -393,11 +399,11 @@ public class ChatStatsBot extends Module {
                 return withPlayer(target, p -> target + ": " + p.msgs + " messages");
             case "deaths": {
                 Integer d = lookup(DEATHS, target);
-                return d == null ? "No death record for " + target + "." : target + ": " + d + " deaths";
+                return d == null ? "No death record found." : target + ": " + d + " deaths";
             }
             case "kills": {
                 Integer k = lookup(KILLS, target);
-                return k == null ? "No kill record for " + target + "." : target + ": " + k + " kills";
+                return k == null ? "No kill record found." : target + ": " + k + " kills";
             }
             case "info": case "inf": case "i": case "stats": {
                 Integer d = lookup(DEATHS, target);
