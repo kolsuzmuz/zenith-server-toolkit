@@ -28,18 +28,38 @@ resolve_target_dir() {
         fi
     done
 
-    # 3. Check current working directory
-    if [ -d "$(pwd)/plugins" ]; then
-        echo "$(pwd)/plugins"
-        return 0
+    # 3. Check running proxy process
+    local running_pid
+    running_pid="$(pgrep -u "$(id -u)" -f "java.*ZenithProxy" 2>/dev/null | head -n 1 || pgrep -u "$(id -u)" -f "ZenithProxy.*\.jar" 2>/dev/null | head -n 1 || true)"
+    if [ -n "$running_pid" ] && [ -e "/proc/${running_pid}/cwd" ]; then
+        local running_dir
+        running_dir="$(readlink -f "/proc/${running_pid}/cwd" 2>/dev/null || true)"
+        if [ -n "$running_dir" ] && [ -d "$running_dir" ]; then
+            echo "$running_dir/plugins"
+            return 0
+        fi
     fi
-    if [ -f "$(pwd)/config.json" ] || [ -f "$(pwd)/launch" ] || [ -f "$(pwd)/launch.sh" ]; then
+
+    # 4. Check current working directory if it contains proxy signatures
+    if [ -d "$(pwd)/plugins" ] && ( [ -f "$(pwd)/launch" ] || [ -f "$(pwd)/launch.sh" ] || ls "$(pwd)"/*ZenithProxy*.jar >/dev/null 2>&1 ); then
         echo "$(pwd)/plugins"
         return 0
     fi
 
-    # 4. Check existing plugins directories
-    local existing_candidates=(
+    # 5. Check existing plugins directories
+    local existing_candidates=()
+    local search_roots=("${TOOLKIT_ROOT}/.." "${HOME}" "/opt")
+    for s_root in "${search_roots[@]}"; do
+        if [ -d "$s_root" ]; then
+            for d in "${s_root}"/*zenith* "${s_root}"/*proxy*; do
+                if [ -d "$d" ] && [ "$d" != "${TOOLKIT_ROOT}" ]; then
+                    existing_candidates+=("$d/plugins")
+                fi
+            done
+        fi
+    done
+
+    existing_candidates+=(
         "${TOOLKIT_ROOT}/../zenithproxy/plugins"
         "${HOME}/zenithproxy/plugins"
         "${TOOLKIT_ROOT}/../proxy/plugins"

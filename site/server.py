@@ -24,6 +24,46 @@ DB_OVERRIDE = None
 # CORS is off by default (same-origin only). Set CORS_ORIGIN=https://your.site (or "*") to allow cross-origin reads.
 CORS_ORIGIN = os.environ.get("CORS_ORIGIN", "").strip()
 
+def find_candidate_proxy_dirs():
+    """
+    Dynamically discovers candidate ZenithProxy directories on any Linux VDS
+    without requiring hardcoded folder names.
+    """
+    dirs = []
+    try:
+        import glob
+        for proc_stat in glob.glob("/proc/[0-9]*/cmdline"):
+            try:
+                with open(proc_stat, "rb") as f:
+                    cmd = f.read().decode("utf-8", "replace")
+                    if "ZenithProxy" in cmd and "java" in cmd.lower() and "python" not in cmd:
+                        pid = proc_stat.split("/")[2]
+                        cwd = os.path.realpath(f"/proc/{pid}/cwd")
+                        if os.path.isdir(cwd) and cwd not in dirs:
+                            dirs.append(cwd)
+            except (OSError, PermissionError):
+                pass
+    except Exception:
+        pass
+
+    try:
+        import glob
+        search_roots = [
+            os.path.abspath(os.path.join(TOOLKIT_ROOT, "..")),
+            os.path.expanduser("~"),
+            "/opt",
+        ]
+        for root in search_roots:
+            if not os.path.isdir(root):
+                continue
+            for p in glob.glob(os.path.join(root, "*zenith*")) + glob.glob(os.path.join(root, "*proxy*")):
+                if os.path.isdir(p) and p != TOOLKIT_ROOT and p != root and p not in dirs:
+                    if os.path.exists(os.path.join(p, "launch")) or os.path.exists(os.path.join(p, "launch.sh")) or glob.glob(os.path.join(p, "*ZenithProxy*.jar")):
+                        dirs.append(p)
+    except Exception:
+        pass
+    return dirs
+
 def resolve_db():
     """
     Dynamically finds sessions.db across environment variables,
@@ -48,6 +88,12 @@ def resolve_db():
         os.path.join(os.getcwd(), "sessions.db"),
         os.path.join(SCRIPT_DIR, "sessions.db"),
         os.path.join(TOOLKIT_ROOT, "sessions.db"),
+    ]
+
+    for p_dir in find_candidate_proxy_dirs():
+        candidates.append(os.path.join(p_dir, "sessions.db"))
+
+    candidates.extend([
         os.path.join(TOOLKIT_ROOT, "..", "sessions.db"),
         os.path.join(TOOLKIT_ROOT, "..", "zenithproxy", "sessions.db"),
         os.path.join(TOOLKIT_ROOT, "..", "proxy", "sessions.db"),
@@ -57,7 +103,7 @@ def resolve_db():
         os.path.expanduser("~/.zenithproxy/sessions.db"),
         "/opt/zenithproxy/sessions.db",
         "/var/zenithproxy/sessions.db",
-    ]
+    ])
 
     for candidate in candidates:
         if os.path.exists(candidate):

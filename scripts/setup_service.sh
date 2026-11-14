@@ -54,6 +54,19 @@ else
 fi
 
 discover_proxy_dir() {
+    # 1. From running ZenithProxy process
+    local running_pid
+    running_pid="$(pgrep -f "ZenithProxy.*\.jar" 2>/dev/null | head -n 1 || pgrep -f "ZenithProxy" 2>/dev/null | head -n 1 || true)"
+    if [ -n "$running_pid" ] && [ -e "/proc/${running_pid}/cwd" ]; then
+        local running_dir
+        running_dir="$(readlink -f "/proc/${running_pid}/cwd" 2>/dev/null || true)"
+        if [ -n "$running_dir" ] && [ -d "$running_dir" ]; then
+            echo "$running_dir"
+            return 0
+        fi
+    fi
+
+    # 2. Environment variables
     local candidates=()
     if [ -n "${SESSIONS_LOG:-}" ]; then
         candidates+=("$(dirname "$SESSIONS_LOG")")
@@ -63,10 +76,26 @@ discover_proxy_dir() {
             candidates+=("$env_key")
         fi
     done
+
+    # 3. Dynamic search in user home and parent directories
     local u_home
     u_home="$(getent passwd "$EXEC_USER" 2>/dev/null | cut -d: -f6)"
     [ -z "$u_home" ] && u_home="$HOME"
-    candidates+=("${u_home}/zenithproxy" "/opt/zenithproxy")
+
+    local search_roots=("${TOOLKIT_ROOT}/.." "${u_home}" "/opt")
+    for s_root in "${search_roots[@]}"; do
+        if [ -d "$s_root" ]; then
+            for d in "${s_root}"/*zenith* "${s_root}"/*proxy*; do
+                if [ -d "$d" ] && [ "$d" != "${TOOLKIT_ROOT}" ]; then
+                    if [ -f "$d/launch" ] || [ -f "$d/launch.sh" ] || ls "$d"/*ZenithProxy*.jar >/dev/null 2>&1; then
+                        candidates+=("$d")
+                    fi
+                fi
+            done
+        fi
+    done
+
+    candidates+=("${u_home}/zenithproxy" "${u_home}/proxy" "/opt/zenithproxy")
 
     for c in "${candidates[@]}"; do
         if [ -d "$c" ]; then
@@ -81,6 +110,7 @@ target_dir=""
 importer_log_env=""
 if [ -n "$DB_PATH" ]; then
     target_dir="$(dirname "$DB_PATH")"
+    importer_log_env="Environment=\"SESSIONS_LOG=${target_dir}/sessions.log\""
 else
     target_dir="$(discover_proxy_dir 2>/dev/null || true)"
     if [ -n "$target_dir" ]; then

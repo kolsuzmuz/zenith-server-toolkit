@@ -24,10 +24,33 @@ resolve_proxy_dir() {
         fi
     done
 
-    # 3. Candidate directories to check for ZenithProxy signatures
-    local candidates=(
-        "$(pwd)"
-        "${TOOLKIT_ROOT}/.."
+    # 3. Running process detection
+    local running_pid
+    running_pid="$(pgrep -u "$(id -u)" -f "java.*ZenithProxy" 2>/dev/null | head -n 1 || pgrep -u "$(id -u)" -f "ZenithProxy.*\.jar" 2>/dev/null | head -n 1 || true)"
+    if [ -n "$running_pid" ] && [ -e "/proc/${running_pid}/cwd" ]; then
+        local running_dir
+        running_dir="$(readlink -f "/proc/${running_pid}/cwd" 2>/dev/null || true)"
+        if [ -n "$running_dir" ] && [ -d "$running_dir" ]; then
+            echo "$running_dir"
+            return 0
+        fi
+    fi
+
+    # 4. Candidate directories to check for ZenithProxy signatures
+    local candidates=("$(pwd)")
+
+    local search_roots=("${TOOLKIT_ROOT}/.." "${HOME}" "/opt")
+    for s_root in "${search_roots[@]}"; do
+        if [ -d "$s_root" ]; then
+            for d in "${s_root}"/*zenith* "${s_root}"/*proxy*; do
+                if [ -d "$d" ] && [ "$d" != "${TOOLKIT_ROOT}" ]; then
+                    candidates+=("$d")
+                fi
+            done
+        fi
+    done
+
+    candidates+=(
         "${TOOLKIT_ROOT}/../zenithproxy"
         "${TOOLKIT_ROOT}/../proxy"
         "${TOOLKIT_ROOT}/zenithproxy"
@@ -40,14 +63,14 @@ resolve_proxy_dir() {
 
     for dir in "${candidates[@]}"; do
         if [ -d "$dir" ]; then
-            if [ -f "$dir/launch" ] || [ -f "$dir/launch.sh" ] || [ -f "$dir/config.json" ] || ls "$dir"/*ZenithProxy*.jar >/dev/null 2>&1; then
+            if [ -f "$dir/launch" ] || [ -f "$dir/launch.sh" ] || ls "$dir"/*ZenithProxy*.jar >/dev/null 2>&1; then
                 echo "$(cd "$dir" && pwd)"
                 return 0
             fi
         fi
     done
 
-    # 4. Fallback to current working directory
+    # 5. Fallback to current working directory
     pwd
 }
 

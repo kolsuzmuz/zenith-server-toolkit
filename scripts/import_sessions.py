@@ -15,6 +15,46 @@ from datetime import datetime, timezone, timedelta
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TOOLKIT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 
+def find_candidate_proxy_dirs():
+    """
+    Dynamically discovers candidate ZenithProxy directories on any Linux VDS
+    without requiring hardcoded folder names.
+    """
+    dirs = []
+    try:
+        import glob
+        for proc_stat in glob.glob("/proc/[0-9]*/cmdline"):
+            try:
+                with open(proc_stat, "rb") as f:
+                    cmd = f.read().decode("utf-8", "replace")
+                    if "ZenithProxy" in cmd and "java" in cmd.lower() and "python" not in cmd:
+                        pid = proc_stat.split("/")[2]
+                        cwd = os.path.realpath(f"/proc/{pid}/cwd")
+                        if os.path.isdir(cwd) and cwd not in dirs:
+                            dirs.append(cwd)
+            except (OSError, PermissionError):
+                pass
+    except Exception:
+        pass
+
+    try:
+        import glob
+        search_roots = [
+            os.path.abspath(os.path.join(TOOLKIT_ROOT, "..")),
+            os.path.expanduser("~"),
+            "/opt",
+        ]
+        for root in search_roots:
+            if not os.path.isdir(root):
+                continue
+            for p in glob.glob(os.path.join(root, "*zenith*")) + glob.glob(os.path.join(root, "*proxy*")):
+                if os.path.isdir(p) and p != TOOLKIT_ROOT and p != root and p not in dirs:
+                    if os.path.exists(os.path.join(p, "launch")) or os.path.exists(os.path.join(p, "launch.sh")) or glob.glob(os.path.join(p, "*ZenithProxy*.jar")):
+                        dirs.append(p)
+    except Exception:
+        pass
+    return dirs
+
 def resolve_paths(cli_log=None, cli_db=None):
     """
     Intelligently discovers sessions.log and sessions.db across environment
@@ -30,6 +70,9 @@ def resolve_paths(cli_log=None, cli_db=None):
         for env_key in ("ZENITH_DIR", "ZENITH_HOME", "PROXY_DIR"):
             if env_key in os.environ and os.environ[env_key]:
                 log_candidates.append(os.path.join(os.environ[env_key], "sessions.log"))
+
+        for p_dir in find_candidate_proxy_dirs():
+            log_candidates.append(os.path.join(p_dir, "sessions.log"))
 
         log_candidates.extend([
             os.path.join(os.getcwd(), "sessions.log"),
