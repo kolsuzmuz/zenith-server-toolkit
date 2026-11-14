@@ -332,7 +332,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     timeout = 10  # seconds; drop idle/stalled client sockets instead of holding a thread forever
     def _get_response_data(self):
         u = urlparse(self.path)
-        if u.path == "/api":
+        if u.path in ("/api", "/api/"):
             r = parse_qs(u.query).get("range", ["1d"])[0]
             span = RANGES.get(r, 86400)
             with cache_lock:
