@@ -243,30 +243,29 @@ public class ScoreboardDeathLogger extends Module {
         }
 
         private void writeFile() {
-             if (!loadedFromDisk) return;
+            if (!loadedFromDisk) return;
             Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
             StringBuilder sb = new StringBuilder();
             for (Map.Entry<String, Integer> entry : knownScores.entrySet()) {
-                  sb.append(entry.getKey()).append(" : ").append(entry.getValue()).append("\n");
-              }
-              try {
-                   Files.write(tmp, sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
-               } catch (IOException e) {
-                   try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
-                  e.printStackTrace();
-                  return; // keep the old file untouched
-               }
-               try {
-                   Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-               } catch (java.nio.file.AtomicMoveNotSupportedException e) {
-                   try {
-                      Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                  } catch (IOException ex) {
+                sb.append(entry.getKey()).append(" : ").append(entry.getValue()).append("\n");
+            }
+            try {
+                Files.write(tmp, sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            } catch (IOException e) {
+                try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
+                e.printStackTrace();
+                return; // keep the old file untouched
+            }
+            try {
+                Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                try {
+                    Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                } catch (IOException ex) {
                     ex.printStackTrace();
                 }
             } catch (IOException e) {
-                 e.printStackTrace();
-                 }
+                e.printStackTrace();
             }
         }
     }
