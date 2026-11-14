@@ -165,10 +165,13 @@ def test_inode_change_does_not_duplicate_existing_events():
         assert ev_count1 == 2
         assert sess_count1 == 1
 
-        # Re-create file at same path (simulating sed -i or replacement -> new inode)
-        os.remove(log_path)
-        with open(log_path, "w", encoding="utf-8") as f:
+        # Re-create file at same path with a new inode (simulating rotation/atomic replacement)
+        old_inode = os.stat(log_path).st_ino
+        new_path = log_path + ".new"
+        with open(new_path, "w", encoding="utf-8") as f:
             f.write(content)
+        os.replace(new_path, log_path)
+        assert os.stat(log_path).st_ino != old_inode
 
         # run_once again: should detect inode change, but skip lines <= MAX(ts)
         n2 = run_once(con, log_path)
