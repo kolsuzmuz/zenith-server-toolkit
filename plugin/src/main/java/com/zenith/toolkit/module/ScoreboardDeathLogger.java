@@ -184,6 +184,7 @@ public class ScoreboardDeathLogger extends Module {
         private final Path file;
         private final Map<String, Integer> knownScores = new java.util.TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         private boolean loadedFromDisk = false;
+        private boolean loadErrorShown = false;
 
         TrackedBoard(Path file) {
             this.file = file;
@@ -191,10 +192,10 @@ public class ScoreboardDeathLogger extends Module {
 
         synchronized void loadIfNeeded() {
             if (loadedFromDisk) return;
-            loadedFromDisk = true;
-            if (!Files.exists(file)) return;
+            if (!Files.exists(file)) { loadedFromDisk = true; return; }
             try {
-                for (String line : Files.readAllLines(file)) {
+                String content = new String(Files.readAllBytes(file), java.nio.charset.StandardCharsets.UTF_8);
+                for (String line : content.split("\\r?\\n")) {
                     int sep = line.lastIndexOf(" : ");
                     if (sep == -1) continue;
                     String username = cleanName(line.substring(0, sep));
@@ -203,8 +204,12 @@ public class ScoreboardDeathLogger extends Module {
                         knownScores.put(username, Integer.parseInt(line.substring(sep + 3).trim()));
                     } catch (NumberFormatException ignored) {}
                 }
+                loadedFromDisk = true;
             } catch (IOException e) {
-                e.printStackTrace();
+                if (!loadErrorShown) {
+                    loadErrorShown = true;
+                    e.printStackTrace();
+                }
             }
         }
 
@@ -212,6 +217,7 @@ public class ScoreboardDeathLogger extends Module {
             String clean = cleanName(username);
             if (clean == null) return;
             loadIfNeeded();
+            if (!loadedFromDisk) return;
             int current = knownScores.getOrDefault(clean, 0);
             knownScores.put(clean, current + 1);
             writeFile();
@@ -237,20 +243,30 @@ public class ScoreboardDeathLogger extends Module {
         }
 
         private void writeFile() {
+             if (!loadedFromDisk) return;
             Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-            try {
-                try (java.io.BufferedWriter bw = Files.newBufferedWriter(tmp, java.nio.charset.StandardCharsets.UTF_8)) {
-                    for (Map.Entry<String, Integer> entry : knownScores.entrySet()) {
-                        bw.write(entry.getKey() + " : " + entry.getValue() + "\n");
-                    }
-                }
-                Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-            } catch (IOException e) {
-                try {
-                    Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                } catch (IOException ex) {
+            StringBuilder sb = new StringBuilder();
+            for (Map.Entry<String, Integer> entry : knownScores.entrySet()) {
+                  sb.append(entry.getKey()).append(" : ").append(entry.getValue()).append("\n");
+              }
+              try {
+                   Files.write(tmp, sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+               } catch (IOException e) {
+                   try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
+                  e.printStackTrace();
+                  return; // keep the old file untouched
+               }
+               try {
+                   Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+               } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                   try {
+                      Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                  } catch (IOException ex) {
                     ex.printStackTrace();
                 }
+            } catch (IOException e) {
+                 e.printStackTrace();
+                 }
             }
         }
     }
