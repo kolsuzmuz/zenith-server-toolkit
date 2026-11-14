@@ -291,7 +291,7 @@ python3 scripts/import_sessions.py
 
 The web dashboard renders an interactive player count graph with multi-range filters (3h, 6h, 12h, 1d, 7d, 15d, 30d).
 
-The `/api` endpoint automatically attaches `Access-Control-Allow-Origin: *` headers, allowing cross-origin requests from external web apps, Discord status widgets, and Grafana dashboards.
+The `/api` endpoint sends no CORS headers by default. To allow cross-origin requests from a browser (for example JavaScript on another website), set `CORS_ORIGIN=https://your.site` (or `*`) in `/etc/default/zenith-dashboard` and restart the service. Server-side clients such as bots or a Grafana backend are not subject to CORS.
 
 ### Local Testing
 ```bash
@@ -486,7 +486,7 @@ To prevent data loss of historical playtime, kills, and session statistics:
 - **Cause 2:** Make sure there are no duplicate versions in `plugins/`. `download_plugin.sh` automatically removes older versions during installation.
 
 ### Issue: Cross-Origin (CORS) errors accessing /api
-- **Solution:** `/api` includes `Access-Control-Allow-Origin: *` out of the box. Ensure requests use standard HTTP methods (`GET`, `OPTIONS`).
+- **Solution:** CORS headers are off by default. Set `CORS_ORIGIN=https://your.site` (or `*`) in `/etc/default/zenith-dashboard`, then run `sudo systemctl restart zenith-dashboard`.
 
 ### Issue: "Port 8080 already in use"
 - **Solution:** Another process is listening on port 8080. Start the server on a different port:
