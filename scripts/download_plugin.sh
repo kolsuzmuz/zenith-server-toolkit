@@ -125,6 +125,7 @@ echo "[*] Target plugins folder: $TARGET_DIR"
 echo "[*] Repository source: $REPO"
 
 downloaded=false
+verify_failed=false
 TEMP_JAR="${TARGET_DIR}/.ZenithServerToolkit-download.tmp"
 GH_TEMP_DIR=""
 FINAL_JAR=""
@@ -224,11 +225,12 @@ if command -v gh >/dev/null 2>&1; then
         CANDIDATE_JAR="$(find "$GH_TEMP_DIR" -maxdepth 1 -name "ZenithServerToolkit*.jar" ! -name "*-sources.jar" | sort -V | tail -n 1 || true)"
         if [ -n "$CANDIDATE_JAR" ] && [ -f "$CANDIDATE_JAR" ]; then
             if verify_jar "$CANDIDATE_JAR" "$(basename "$CANDIDATE_JAR")" "$GH_TEMP_DIR/SHA256SUMS"; then
-                rm -f "${TARGET_DIR}"/ZenithServerToolkit*.jar
                 mv "$CANDIDATE_JAR" "$TARGET_DIR/"
+                find "$TARGET_DIR" -maxdepth 1 -name 'ZenithServerToolkit*.jar' ! -name "$(basename "$CANDIDATE_JAR")" -delete
                 FINAL_JAR="${TARGET_DIR}/$(basename "$CANDIDATE_JAR")"
                 downloaded=true
             else
+                verify_failed=true
                 echo "[-] Refusing to install an unverified jar (gh)." >&2
             fi
         fi
@@ -257,8 +259,8 @@ if [ "$downloaded" = false ]; then
         if fetch "$RELEASE_URL" "$TEMP_JAR" && fetch "$SUMS_URL" "$TEMP_SUMS"; then
             if verify_jar "$TEMP_JAR" "$JAR_NAME" "$TEMP_SUMS"; then
                 # Remove old versions only after the new jar is verified
-                rm -f "${TARGET_DIR}"/ZenithServerToolkit*.jar
                 mv "$TEMP_JAR" "$FINAL_JAR"
+                find "$TARGET_DIR" -maxdepth 1 -name 'ZenithServerToolkit*.jar' ! -name "$JAR_NAME" -delete
                 downloaded=true
             else
                 echo "[-] Refusing to install an unverified jar." >&2
@@ -271,7 +273,7 @@ if [ "$downloaded" = false ]; then
 fi
 
 # Method 3: Local build artifact fallback if found
-if [ "$downloaded" = false ]; then
+if [ "$downloaded" = false ] && [ "$verify_failed" = false ]; then
     LOCAL_JAR="$(find "${TOOLKIT_ROOT}/plugin/build/libs" -name "ZenithServerToolkit*.jar" ! -name "*-sources.jar" 2>/dev/null | head -n 1 || true)"
     if [ -n "$LOCAL_JAR" ] && [ -f "$LOCAL_JAR" ]; then
         echo "[*] Found pre-built local artifact: $LOCAL_JAR"

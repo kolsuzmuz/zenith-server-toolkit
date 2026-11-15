@@ -40,7 +40,7 @@ public class ChatStatsBot extends Module {
     private static final Path ENABLE_FILE = Path.of("chatbot_reply.enabled");
     private static final Path DEATHS = Path.of("scoreboard_deaths.log");
     private static final Path KILLS = Path.of("scoreboard_kills.log");
-    private static final Pattern TARGET = Pattern.compile("^\\.?[A-Za-z0-9_]{1,16}$");
+    private static final Pattern TARGET = Pattern.compile("^[A-Za-z0-9_.]{1,32}$");
     private static final Pattern SAFE_NAME = Pattern.compile("^[A-Za-z0-9_.]{1,32}$");
     private static final DateTimeFormatter TS_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final long GLOBAL_COOLDOWN_MS = 3000;
@@ -290,7 +290,15 @@ public class ChatStatsBot extends Module {
         info("ChatStatsBot loaded " + all.size() + " players (" + src + "), with UUID: " + withUuid);
     }
 
+    private final Object saveLock = new Object();
+
     private void save() {
+        synchronized (saveLock) {
+            saveLocked();
+        }
+    }
+
+    private void saveLocked() {
         if (loadFailed) return;
         StringBuilder sb = new StringBuilder();
         synchronized (lock) {
@@ -457,10 +465,10 @@ public class ChatStatsBot extends Module {
         if (parts.length == 0 || parts[0].isEmpty()) return;
         String cmd = parts[0].toLowerCase();
         if (!COMMANDS.contains(cmd)) return;
-        if (cmd.equals("seed") && buildReply("seed", parts, sender) == null) return;
-        if (!tryAcquireCooldown(sender)) return;
         String reply = buildReply(cmd, parts, sender);
-        if (reply != null) sendReply(sender, reply);
+        if (reply == null) return;
+        if (!tryAcquireCooldown(sender)) return;
+        sendReply(sender, reply);
     }
 
     private String buildReply(String cmd, String[] parts, String sender) {
