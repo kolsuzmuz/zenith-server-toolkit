@@ -162,7 +162,10 @@ def parse(ts):
 
 def normalize_ts(ts):
     try:
-        return parse(ts).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+        d = parse(ts)
+        if d.tzinfo is not None:
+            d = d.astimezone(timezone.utc)
+        return d.strftime("%Y-%m-%dT%H:%M:%S+00:00")
     except Exception:
         return ts
 

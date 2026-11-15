@@ -89,12 +89,11 @@ if ! command -v tmux >/dev/null 2>&1; then
 fi
 
 is_proxy_running() {
-    pgrep -u "$(id -u)" -f "java.*ZenithProxy" >/dev/null 2>&1 && return 0
-    pgrep -u "$(id -u)" -f "ZenithProxy.*\.jar" >/dev/null 2>&1 && return 0
     local pid cwd real_dir
     real_dir="$(cd "$PROXY_DIR" && pwd -P)"
-    for pid in $(pgrep -u "$(id -u)" -x java 2>/dev/null || true); do
-        cwd="$(readlink "/proc/${pid}/cwd" 2>/dev/null || true)"
+    for pid in $(pgrep -u "$(id -u)" -f "ZenithProxy" 2>/dev/null || true) $(pgrep -u "$(id -u)" -x java 2>/dev/null || true); do
+        [ "$pid" = "$$" ] && continue
+        cwd="$(readlink -f "/proc/${pid}/cwd" 2>/dev/null || true)"
         if [ "$cwd" = "$real_dir" ]; then
             return 0
         fi

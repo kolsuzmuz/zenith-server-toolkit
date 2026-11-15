@@ -62,10 +62,19 @@ public class SessionLogger extends Module {
         sb.append(ts(millis)).append("|").append(uuid).append("|").append(name).append("|").append(kind).append("\n");
     }
 
+    private final StringBuilder pending = new StringBuilder();
+
     private void flush(StringBuilder sb) {
-        if (sb.length() == 0) return;
+        pending.append(sb);
+        if (pending.length() == 0) return;
+        if (pending.length() > 1_000_000) {
+            pending.delete(0, pending.length() - 1_000_000);
+            int nl = pending.indexOf("\n");
+            if (nl >= 0) pending.delete(0, nl + 1);
+        }
         try {
-            Files.writeString(FILE, sb.toString(), StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            Files.writeString(FILE, pending.toString(), StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            pending.setLength(0);
         } catch (IOException e) {
             e.printStackTrace();
         }
