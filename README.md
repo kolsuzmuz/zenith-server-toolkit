@@ -231,6 +231,14 @@ The chatbot includes built-in rate limiters:
 3. **Loop Suppression:** Replies sent by the bot are kept in a circular buffer to prevent recursive chat feedback loops with other bots.
 4. **Length Truncation:** Outgoing messages are sanitized of control characters and capped at 200 characters to prevent packet rejection.
 
+#### Anti-Spam DM Fallback
+
+If the target server blocks a public bot reply with a system anti-spam warning, the bot can optionally resend that reply privately to the requesting player via `/msg`:
+- **Disabled by Default:** `chatStatsBot.antiSpamDm.enabled` is `false` out of the box, leaving existing public-chat behavior unchanged.
+- **How to Enable:** Set `"enabled": true` under `chatStatsBot.antiSpamDm` in `plugins/config/zenith-server-toolkit.json`. Optionally set `warningText` to the server's anti-spam notice; if `warningText` is left empty (`""`), the bot matches `fallbackKeyword` (`"spam"` by default).
+- **System-Message Only:** Only server/system chat messages are inspected (player chat containing `"spam"` never triggers a DM).
+- **Dry-Run & Safety Compatible:** Enforces `[A-Za-z0-9_]{1,16}` username validation, skips the bot's own username, caps the formatted DM command (prefix included) at 200 characters, applies the 3-second global cooldown plus `maxDmPerMinute`, never chains a second DM if a DM triggers a warning, and logs `[DRY-RUN] Anti-spam DM for <player>: <command>` when `chatbot_reply.enabled` is absent.
+
 ---
 
 ## Configuration Reference
@@ -258,7 +266,15 @@ After running ZenithProxy once with the plugin installed, configuration is autom
     "enabled": true,
     "worldSeed": "0",
     "useSystemTimezone": true,
-    "utcOffsetHours": 0
+    "utcOffsetHours": 0,
+    "antiSpamDm": {
+      "enabled": false,
+      "warningText": "",
+      "fallbackKeyword": "spam",
+      "dmCommandTemplate": "/msg {player} {message}",
+      "detectionWindowMs": 4000,
+      "maxDmPerMinute": 6
+    }
   }
 }
 ```
@@ -278,6 +294,12 @@ After running ZenithProxy once with the plugin installed, configuration is autom
 | `chatStatsBot.worldSeed` | `string` | `"0"` | String returned to players when typing `!seed`. |
 | `chatStatsBot.useSystemTimezone` | `boolean` | `true` | When `true`, formats timestamps (`!jd`, `!info`) using the VDS system timezone. |
 | `chatStatsBot.utcOffsetHours` | `integer` | `0` | Manual UTC timezone offset in hours, applied only when `useSystemTimezone` is `false`. |
+| `chatStatsBot.antiSpamDm.enabled` | `boolean` | `false` | Enables falling back to a private DM when a server system anti-spam warning follows a public bot reply. |
+| `chatStatsBot.antiSpamDm.warningText` | `string` | `""` | Custom server anti-spam warning substring (case-insensitive, color codes stripped). When blank, `fallbackKeyword` is used. |
+| `chatStatsBot.antiSpamDm.fallbackKeyword` | `string` | `"spam"` | Keyword matched against normalized system messages when `warningText` is empty. |
+| `chatStatsBot.antiSpamDm.dmCommandTemplate` | `string` | `"/msg {player} {message}"` | Command template used for private replies (e.g. `"/w {player} {message}"` or `"/tell {player} {message}"`). |
+| `chatStatsBot.antiSpamDm.detectionWindowMs` | `integer` | `4000` | Maximum time in milliseconds after a public reply during which a system warning can claim that reply for DM fallback. |
+| `chatStatsBot.antiSpamDm.maxDmPerMinute` | `integer` | `6` | Maximum number of anti-spam fallback DMs sent per rolling 60-second window. |
 
 ---
 
@@ -388,6 +410,7 @@ zenith-server-toolkit/
 │           ├── ToolkitPlugin.java
 │           ├── ToolkitConfig.java
 │           └── module/
+│               ├── AntiSpamDmHandler.java
 │               ├── ChatStatsBot.java
 │               ├── ScoreboardDeathLogger.java
 │               └── SessionLogger.java
