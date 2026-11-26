@@ -598,7 +598,7 @@ public class ChatStatsBot extends Module {
         sendClientPacketAsync(new ServerboundChatPacket(out));
     }
 
-    private static ToolkitConfig.AntiSpamDm antiSpamConfig() {
+    private static ToolkitConfig.ChatStatsBotConfig.AntiSpamDm antiSpamConfig() {
         if (ToolkitPlugin.CONFIG == null || ToolkitPlugin.CONFIG.chatStatsBot == null) {
             return null;
         }
