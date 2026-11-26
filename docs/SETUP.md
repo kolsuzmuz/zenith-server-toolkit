@@ -200,7 +200,15 @@ curl -fsSL "$LATEST_URL" -o ~/zenithproxy/plugins/$(basename "$LATEST_URL")
     "enabled": true,
     "worldSeed": "0",
     "useSystemTimezone": true,
-    "utcOffsetHours": 0
+    "utcOffsetHours": 0,
+    "antiSpamDm": {
+      "enabled": false,
+      "warningText": "",
+      "fallbackKeyword": "spam",
+      "dmCommandTemplate": "/msg {player} {message}",
+      "detectionWindowMs": 4000,
+      "maxDmPerMinute": 6
+    }
   }
 }
 ```
@@ -214,6 +222,7 @@ curl -fsSL "$LATEST_URL" -o ~/zenithproxy/plugins/$(basename "$LATEST_URL")
 - `chatStatsBot.enabled`: Enables chat commands like `!info`, `!top`, `!playtime`.
 - `chatStatsBot.worldSeed`: Seed string displayed when players type `!seed`.
 - `chatStatsBot.useSystemTimezone`: Formats timestamps using system timezone. If `false`, uses `utcOffsetHours`.
+- `chatStatsBot.antiSpamDm`: Optional DM fallback when a server system anti-spam warning blocks a public bot reply (`enabled: false` by default). Set `warningText` for exact server warnings or leave empty to match `fallbackKeyword` (`"spam"`).
 
 ---
 
@@ -241,6 +250,7 @@ rm ~/zenithproxy/chatbot_reply.enabled
 - **Global Cooldown:** 3 seconds minimum between any two outgoing bot replies.
 - **Per-User Cooldown:** 8 seconds per player.
 - **Message Length:** Capped at 200 characters with control characters removed.
+- **Anti-Spam DM Fallback (Optional):** Disabled by default (`chatStatsBot.antiSpamDm.enabled: false`). When enabled, if a server system message matches `warningText` (or `"spam"` when `warningText` is blank) within `detectionWindowMs` (4000 ms), the bot forwards the blocked reply via `/msg` (`dmCommandTemplate`), obeying `maxDmPerMinute`, the 3-second cooldown, the 200-char limit, and the `chatbot_reply.enabled` dry-run switch.
 
 ---
 
