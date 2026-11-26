@@ -36,5 +36,16 @@ public class ToolkitConfig {
         public String worldSeed = "0";
         public boolean useSystemTimezone = true;
         public int utcOffsetHours = 0;
+        public AntiSpamDm antiSpamDm = new AntiSpamDm();
+
+        /** Fallback configuration for sending replies via DM when server anti-spam blocks public chat. */
+        public static class AntiSpamDm {
+            public boolean enabled = false;
+            public String warningText = "";
+            public String fallbackKeyword = "spam";
+            public String dmCommandTemplate = "/msg {player} {message}";
+            public int detectionWindowMs = 4000;
+            public int maxDmPerMinute = 6;
+        }
     }
 }
