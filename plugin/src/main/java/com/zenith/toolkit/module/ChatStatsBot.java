@@ -3,9 +3,12 @@ package com.zenith.toolkit.module;
 import com.github.rfresh2.EventConsumer;
 import com.zenith.Globals;
 import com.zenith.event.chat.PublicChatEvent;
+import com.zenith.event.chat.SystemChatEvent;
 import com.zenith.event.client.ClientBotTick;
 import com.zenith.module.api.Module;
+import com.zenith.toolkit.ToolkitConfig;
 import com.zenith.toolkit.ToolkitPlugin;
+import com.zenith.util.ComponentSerializer;
 import org.geysermc.mcprotocollib.protocol.data.game.PlayerListEntry;
 import org.geysermc.mcprotocollib.protocol.packet.ingame.serverbound.ServerboundChatPacket;
 
@@ -135,7 +138,10 @@ public class ChatStatsBot extends Module {
     private final Map<UUID, String> known = new HashMap<>();
     private final Deque<String> recentReplies = new ArrayDeque<>();
     private final Map<String, Long> userLast = new HashMap<>();
+    private final AntiSpamDmHandler antiSpam = new AntiSpamDmHandler();
     private long lastReplyMs = 0;
+    // Tracked separately because a blocked public reply just updated lastReplyMs milliseconds earlier.
+    private long lastDmMs = 0;
     private boolean loaded = false;
     private volatile boolean loadFailed = false;
     private boolean wasEmpty = true;
@@ -153,7 +159,8 @@ public class ChatStatsBot extends Module {
     public List<EventConsumer<?>> registerEvents() {
         return List.of(
             of(ClientBotTick.class, this::onTick),
-            of(PublicChatEvent.class, this::onChat)
+            of(PublicChatEvent.class, this::onChat),
+            of(SystemChatEvent.class, this::onSystemChat)
         );
     }
 
@@ -584,7 +591,91 @@ public class ChatStatsBot extends Module {
             info("[DRY-RUN] Reply for " + sender + ": " + out);
             return;
         }
+        var antiSpamCfg = antiSpamConfig();
+        if (antiSpamCfg != null && antiSpamCfg.enabled) {
+            antiSpam.registerSent(sender, out, System.currentTimeMillis());
+        }
         sendClientPacketAsync(new ServerboundChatPacket(out));
+    }
+
+    private static ToolkitConfig.AntiSpamDm antiSpamConfig() {
+        if (ToolkitPlugin.CONFIG == null || ToolkitPlugin.CONFIG.chatStatsBot == null) {
+            return null;
+        }
+        return ToolkitPlugin.CONFIG.chatStatsBot.antiSpamDm;
+    }
+
+    private static String botUsername() {
+        if (Globals.CACHE != null && Globals.CACHE.getProfileCache() != null) {
+            var profile = Globals.CACHE.getProfileCache().getProfile();
+            if (profile != null && profile.getName() != null && !profile.getName().isBlank()) {
+                return profile.getName();
+            }
+        }
+        if (Globals.CONFIG != null && Globals.CONFIG.authentication != null) {
+            return Globals.CONFIG.authentication.username;
+        }
+        return null;
+    }
+
+    private boolean tryAcquireDmRateLimits(long nowMs, int maxPerMinute) {
+        synchronized (lock) {
+            if (nowMs - lastDmMs < GLOBAL_COOLDOWN_MS) return false;
+            if (!antiSpam.allowDm(nowMs, maxPerMinute)) return false;
+            lastDmMs = nowMs;
+            if (nowMs > lastReplyMs) lastReplyMs = nowMs;
+            return true;
+        }
+    }
+
+    private void onSystemChat(SystemChatEvent event) {
+        if (!enabledSetting()) return;
+        var cfg = antiSpamConfig();
+        if (cfg == null || !cfg.enabled || event == null) return;
+
+        try {
+            String plainText = null;
+            if (event.component() != null) {
+                plainText = ComponentSerializer.serializePlain(event.component());
+            }
+            if (plainText == null || plainText.isEmpty()) {
+                plainText = event.message();
+            }
+            if (!AntiSpamDmHandler.isWarning(plainText, cfg.warningText, cfg.fallbackKeyword)) {
+                return;
+            }
+
+            long nowMs = System.currentTimeMillis();
+            AntiSpamDmHandler.PendingReply pending = antiSpam.claimLatest(nowMs, cfg.detectionWindowMs);
+            if (pending == null) return;
+
+            if (!AntiSpamDmHandler.isValidPlayerName(pending.playerName)) {
+                warn("Anti-spam DM skipped for invalid player name: {}", pending.playerName);
+                return;
+            }
+
+            String botName = botUsername();
+            if (botName != null && !botName.isBlank() && pending.playerName.equalsIgnoreCase(botName)) {
+                return;
+            }
+
+            String cmd = AntiSpamDmHandler.buildCommand(cfg.dmCommandTemplate, pending.playerName, pending.message, 200);
+            if (cmd.isEmpty()) return;
+
+            if (!tryAcquireDmRateLimits(nowMs, cfg.maxDmPerMinute)) {
+                info("Anti-spam DM rate-limited for {}", pending.playerName);
+                return;
+            }
+
+            if (!Files.exists(ENABLE_FILE)) {
+                info("[DRY-RUN] Anti-spam DM for " + pending.playerName + ": " + cmd);
+                return;
+            }
+            sendClientPacketAsync(new ServerboundChatPacket(cmd));
+        } catch (Throwable t) {
+            try { info("ChatStatsBot system chat ERROR: " + t); } catch (Throwable ignored) {}
+            t.printStackTrace();
+        }
     }
 
     private static long play(P p, long now) {
