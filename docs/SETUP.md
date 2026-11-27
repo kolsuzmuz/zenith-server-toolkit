@@ -208,6 +208,15 @@ curl -fsSL "$LATEST_URL" -o ~/zenithproxy/plugins/$(basename "$LATEST_URL")
       "dmCommandTemplate": "/msg {player} {message}",
       "detectionWindowMs": 4000,
       "maxDmPerMinute": 6
+    },
+    "rateLimitDm": {
+      "enabled": true,
+      "onGlobalLimit": true,
+      "onPerUserLimit": true,
+      "dmCommandTemplate": "",
+      "perPlayerDmCooldownMs": 3000,
+      "maxDmPerMinute": 10,
+      "maxDmPerMinutePerPlayer": 6
     }
   }
 }
@@ -223,6 +232,7 @@ curl -fsSL "$LATEST_URL" -o ~/zenithproxy/plugins/$(basename "$LATEST_URL")
 - `chatStatsBot.worldSeed`: Seed string displayed when players type `!seed`.
 - `chatStatsBot.useSystemTimezone`: Formats timestamps using system timezone. If `false`, uses `utcOffsetHours`.
 - `chatStatsBot.antiSpamDm`: Optional DM fallback when a server system anti-spam warning blocks a public bot reply (`enabled: false` by default). Set `warningText` for exact server warnings or leave empty to match `fallbackKeyword` (`"spam"`).
+- `chatStatsBot.rateLimitDm`: Routes commands blocked by public cooldowns (`3s` global / `8s` per-user) to private `/msg` replies (`enabled: true` by default). Set `rateLimitDm.enabled` to `false` to silently drop rate-limited commands instead.
 
 ---
 
@@ -247,8 +257,9 @@ rm ~/zenithproxy/chatbot_reply.enabled
 ```
 
 ### Spam & Cooldown Rules
-- **Global Cooldown:** 3 seconds minimum between any two outgoing bot replies.
-- **Per-User Cooldown:** 8 seconds per player.
+- **Global Cooldown:** 3 seconds minimum between any two outgoing public bot replies.
+- **Per-User Cooldown:** 8 seconds per player in public chat.
+- **Rate-Limited Replies via /msg (Enabled by Default):** When a command hits the 3s global or 8s per-user public cooldown, `chatStatsBot.rateLimitDm` (`enabled: true`) sends the reply privately via `/msg` (inheriting `antiSpamDm.dmCommandTemplate` when `rateLimitDm.dmCommandTemplate` is blank). It enforces its own limits (`perPlayerDmCooldownMs: 3000`, `maxDmPerMinute: 10`, `maxDmPerMinutePerPlayer: 6`), does not delay public replies (`lastReplyMs`), and respects `chatbot_reply.enabled` dry-run mode (`[DRY-RUN] Rate-limit DM for ...`). Set `"rateLimitDm": {"enabled": false}` to revert to silent drops.
 - **Message Length:** Capped at 200 characters with control characters removed.
 - **Anti-Spam DM Fallback (Optional):** Disabled by default (`chatStatsBot.antiSpamDm.enabled: false`). When enabled, if a server system message matches `warningText` (or `"spam"` when `warningText` is blank) within `detectionWindowMs` (4000 ms), the bot forwards the blocked reply via `/msg` (`dmCommandTemplate`), obeying `maxDmPerMinute`, the 3-second cooldown, the 200-char limit, and the `chatbot_reply.enabled` dry-run switch.
 
