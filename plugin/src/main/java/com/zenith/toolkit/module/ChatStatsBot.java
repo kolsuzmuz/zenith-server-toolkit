@@ -26,6 +26,7 @@ import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -131,6 +132,12 @@ public class ChatStatsBot extends Module {
         long first, last, msgs, joins, play, sess;
     }
 
+    enum DmReason {
+        GLOBAL,
+        PER_USER,
+        ANTI_SPAM
+    }
+
     private final Object lock = new Object();
     private final List<P> all = new ArrayList<>();
     private final Map<String, P> byUuid = new HashMap<>();
@@ -139,6 +146,7 @@ public class ChatStatsBot extends Module {
     private final Deque<String> recentReplies = new ArrayDeque<>();
     private final Map<String, Long> userLast = new HashMap<>();
     private final AntiSpamDmHandler antiSpam = new AntiSpamDmHandler();
+    private final RateLimitDmThrottle rateLimitThrottle = new RateLimitDmThrottle();
     private long lastReplyMs = 0;
     // Tracked separately because a blocked public reply just updated lastReplyMs milliseconds earlier.
     private long lastDmMs = 0;
@@ -440,13 +448,13 @@ public class ChatStatsBot extends Module {
         }
     }
 
-    private boolean tryAcquireCooldown(String sender) {
+    private RateLimitDmThrottle.BlockReason acquirePublicCooldownOrReason(String sender) {
         long nowMs = System.currentTimeMillis();
-        String key = sender.toLowerCase();
+        String key = sender.toLowerCase(Locale.ROOT);
         synchronized (lock) {
-            if (nowMs - lastReplyMs < GLOBAL_COOLDOWN_MS) return false;
+            if (nowMs - lastReplyMs < GLOBAL_COOLDOWN_MS) return RateLimitDmThrottle.BlockReason.GLOBAL;
             Long last = userLast.get(key);
-            if (last != null && nowMs - last < USER_COOLDOWN_MS) return false;
+            if (last != null && nowMs - last < USER_COOLDOWN_MS) return RateLimitDmThrottle.BlockReason.PER_USER;
             lastReplyMs = nowMs;
             if (userLast.size() > 1000) {
                 userLast.entrySet().removeIf(e -> nowMs - e.getValue() >= USER_COOLDOWN_MS);
@@ -463,19 +471,35 @@ public class ChatStatsBot extends Module {
                 }
             }
             userLast.put(key, nowMs);
-            return true;
+            return null;
         }
+    }
+
+    static boolean isRateLimitDmEligible(ToolkitConfig.ChatStatsBotConfig.RateLimitDm cfg,
+                                         RateLimitDmThrottle.BlockReason reason) {
+        return cfg != null && RateLimitDmThrottle.shouldRouteToDm(
+            cfg.enabled, cfg.onGlobalLimit, cfg.onPerUserLimit, reason);
     }
 
     private void handleCommand(String sender, String text) {
         String[] parts = text.substring(1).trim().split("\\s+");
         if (parts.length == 0 || parts[0].isEmpty()) return;
-        String cmd = parts[0].toLowerCase();
+        String cmd = parts[0].toLowerCase(Locale.ROOT);
         if (!COMMANDS.contains(cmd)) return;
         String reply = buildReply(cmd, parts, sender);
         if (reply == null) return;
-        if (!tryAcquireCooldown(sender)) return;
-        sendReply(sender, reply);
+
+        RateLimitDmThrottle.BlockReason blocked = acquirePublicCooldownOrReason(sender);
+        if (blocked == null) {
+            sendReply(sender, reply);
+            return;
+        }
+
+        if (!isRateLimitDmEligible(rateLimitConfig(), blocked)) {
+            return;
+        }
+        DmReason reason = blocked == RateLimitDmThrottle.BlockReason.GLOBAL ? DmReason.GLOBAL : DmReason.PER_USER;
+        trySendDm(sender, reply, reason);
     }
 
     private String buildReply(String cmd, String[] parts, String sender) {
@@ -577,15 +601,25 @@ public class ChatStatsBot extends Module {
         return "Usage: !top kills / deaths / messages / playtime";
     }
 
-    private void sendReply(String sender, String reply) {
+    private static String sanitizeReplyBody(String reply) {
+        if (reply == null) return "";
         String out = reply.replaceAll("\\p{Cntrl}", "");
         if (out.length() > 200) out = out.substring(0, 200);
-        if (out.isEmpty() || out.startsWith("/") || out.startsWith("!")) return;
+        return out;
+    }
 
+    private void recordLoopSuppression(String out) {
         synchronized (lock) {
             recentReplies.addLast(out);
             while (recentReplies.size() > 20) recentReplies.removeFirst();
         }
+    }
+
+    private void sendReply(String sender, String reply) {
+        String out = sanitizeReplyBody(reply);
+        if (out.isEmpty() || out.startsWith("/") || out.startsWith("!")) return;
+
+        recordLoopSuppression(out);
 
         if (!Files.exists(ENABLE_FILE)) {
             info("[DRY-RUN] Reply for " + sender + ": " + out);
@@ -605,6 +639,13 @@ public class ChatStatsBot extends Module {
         return ToolkitPlugin.CONFIG.chatStatsBot.antiSpamDm;
     }
 
+    private static ToolkitConfig.ChatStatsBotConfig.RateLimitDm rateLimitConfig() {
+        if (ToolkitPlugin.CONFIG == null || ToolkitPlugin.CONFIG.chatStatsBot == null) {
+            return null;
+        }
+        return ToolkitPlugin.CONFIG.chatStatsBot.rateLimitDm;
+    }
+
     private static String botUsername() {
         if (Globals.CACHE != null && Globals.CACHE.getProfileCache() != null) {
             var profile = Globals.CACHE.getProfileCache().getProfile();
@@ -618,7 +659,7 @@ public class ChatStatsBot extends Module {
         return null;
     }
 
-    private boolean tryAcquireDmRateLimits(long nowMs, int maxPerMinute) {
+    private boolean tryAcquireAntiSpamDmRateLimits(long nowMs, int maxPerMinute) {
         synchronized (lock) {
             if (nowMs - lastDmMs < GLOBAL_COOLDOWN_MS) return false;
             if (!antiSpam.allowDm(nowMs, maxPerMinute)) return false;
@@ -626,6 +667,78 @@ public class ChatStatsBot extends Module {
             if (nowMs > lastReplyMs) lastReplyMs = nowMs;
             return true;
         }
+    }
+
+    static String resolveRateLimitTemplate(ToolkitConfig.ChatStatsBotConfig.RateLimitDm rl,
+                                             ToolkitConfig.ChatStatsBotConfig.AntiSpamDm antiSpamCfg) {
+        if (rl != null && rl.dmCommandTemplate != null && !rl.dmCommandTemplate.isBlank()) {
+            return rl.dmCommandTemplate;
+        }
+        return antiSpamCfg != null ? antiSpamCfg.dmCommandTemplate : null;
+    }
+
+    private boolean trySendDm(String player, String message, DmReason reason) {
+        String cleanOut = sanitizeReplyBody(message);
+        if (cleanOut.isEmpty() || cleanOut.startsWith("/") || cleanOut.startsWith("!")) return false;
+
+        if (!AntiSpamDmHandler.isValidPlayerName(player)) {
+            if (reason == DmReason.ANTI_SPAM) {
+                warn("Anti-spam DM skipped for invalid player name: {}", player);
+            } else {
+                debug("Rate-limit DM skipped for invalid player name: {}", player);
+            }
+            return false;
+        }
+
+        String botName = botUsername();
+        if (botName != null && !botName.isBlank() && player.equalsIgnoreCase(botName)) {
+            return false;
+        }
+
+        var antiSpamCfg = antiSpamConfig();
+        var rl = rateLimitConfig();
+        String template;
+        if (reason == DmReason.ANTI_SPAM) {
+            if (antiSpamCfg == null) return false;
+            template = antiSpamCfg.dmCommandTemplate;
+        } else {
+            if (rl == null) return false;
+            template = resolveRateLimitTemplate(rl, antiSpamCfg);
+        }
+
+        String cmd = AntiSpamDmHandler.buildCommand(template, player, cleanOut, 200);
+        if (cmd.isEmpty()) return false;
+
+        long nowMs = System.currentTimeMillis();
+        if (reason == DmReason.ANTI_SPAM) {
+            if (!tryAcquireAntiSpamDmRateLimits(nowMs, antiSpamCfg.maxDmPerMinute)) {
+                info("Anti-spam DM rate-limited for {}", player);
+                return false;
+            }
+        } else {
+            if (!rateLimitThrottle.tryAcquire(player, nowMs, rl.perPlayerDmCooldownMs, rl.maxDmPerMinute, rl.maxDmPerMinutePerPlayer)) {
+                debug("Rate-limit DM throttled for {} (reason={})", player, reason);
+                return false;
+            }
+        }
+        return dispatchDm(player, cmd, cleanOut, reason);
+    }
+
+    private boolean dispatchDm(String player, String cmd, String cleanOut, DmReason reason) {
+        if (reason != DmReason.ANTI_SPAM) {
+            recordLoopSuppression(cleanOut);
+        }
+        if (!Files.exists(ENABLE_FILE)) {
+            String label = reason == DmReason.ANTI_SPAM ? "Anti-spam" : "Rate-limit";
+            info("[DRY-RUN] " + label + " DM for " + player + ": " + cmd);
+            return true;
+        }
+        if (reason != DmReason.ANTI_SPAM) {
+            info("Rate-limit DM -> {} (reason={})", player, reason);
+        }
+        // Do not update lastReplyMs or register pending anti-spam entries for DMs to avoid blocking public chat or looping.
+        sendClientPacketAsync(new ServerboundChatPacket(cmd));
+        return true;
     }
 
     private void onSystemChat(SystemChatEvent event) {
@@ -648,30 +761,7 @@ public class ChatStatsBot extends Module {
             long nowMs = System.currentTimeMillis();
             AntiSpamDmHandler.PendingReply pending = antiSpam.claimLatest(nowMs, cfg.detectionWindowMs);
             if (pending == null) return;
-
-            if (!AntiSpamDmHandler.isValidPlayerName(pending.playerName)) {
-                warn("Anti-spam DM skipped for invalid player name: {}", pending.playerName);
-                return;
-            }
-
-            String botName = botUsername();
-            if (botName != null && !botName.isBlank() && pending.playerName.equalsIgnoreCase(botName)) {
-                return;
-            }
-
-            String cmd = AntiSpamDmHandler.buildCommand(cfg.dmCommandTemplate, pending.playerName, pending.message, 200);
-            if (cmd.isEmpty()) return;
-
-            if (!tryAcquireDmRateLimits(nowMs, cfg.maxDmPerMinute)) {
-                info("Anti-spam DM rate-limited for {}", pending.playerName);
-                return;
-            }
-
-            if (!Files.exists(ENABLE_FILE)) {
-                info("[DRY-RUN] Anti-spam DM for " + pending.playerName + ": " + cmd);
-                return;
-            }
-            sendClientPacketAsync(new ServerboundChatPacket(cmd));
+            trySendDm(pending.playerName, pending.message, DmReason.ANTI_SPAM);
         } catch (Throwable t) {
             try { info("ChatStatsBot system chat ERROR: " + t); } catch (Throwable ignored) {}
             t.printStackTrace();
