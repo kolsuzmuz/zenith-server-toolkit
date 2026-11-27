@@ -226,10 +226,18 @@ To safeguard your proxy account from automated server mutes, anti-spam kick trig
 ### Spam & Flood Protection
 
 The chatbot includes built-in rate limiters:
-1. **Global Rate Limit:** 3 seconds minimum between any two outgoing bot replies.
-2. **Per-User Rate Limit:** 8 seconds cooldown per individual player. Commands sent during cooldown are silently discarded.
+1. **Global Rate Limit:** 3 seconds minimum between any two outgoing public bot replies.
+2. **Per-User Rate Limit:** 8 seconds cooldown per individual player in public chat. By default (`chatStatsBot.rateLimitDm.enabled = true`), commands hitting the global or per-user cooldown are routed privately via `/msg` instead of public chat; if `rateLimitDm` (or the corresponding limit flag) is disabled, commands sent during cooldown are silently discarded.
 3. **Loop Suppression:** Replies sent by the bot are kept in a circular buffer to prevent recursive chat feedback loops with other bots.
 4. **Length Truncation:** Outgoing messages are sanitized of control characters and capped at 200 characters to prevent packet rejection.
+
+#### Rate-Limited Replies via /msg
+
+To keep busy public chat clean without ignoring rapid follow-up queries, commands blocked by the 3-second global or 8-second per-user public cooldown are automatically answered via private message:
+- **Enabled by Default:** `chatStatsBot.rateLimitDm.enabled`, `onGlobalLimit`, and `onPerUserLimit` all default to `true`.
+- **Independent DM Rate Limits:** Rate-limit DMs do not advance the public `lastReplyMs` cooldown, and enforce their own sliding caps (`perPlayerDmCooldownMs`: `3000`, `maxDmPerMinute`: `10`, `maxDmPerMinutePerPlayer`: `6`). Requests exceeding DM caps are silently dropped (never queued or retried).
+- **Dry-Run & Safety Compatible:** Enforces `[A-Za-z0-9_]{1,16}` username validation, self-DM exclusion, control-character sanitization, loop suppression, and the 200-character command cap. Without `chatbot_reply.enabled`, zero packets are sent and the proxy logs `[DRY-RUN] Rate-limit DM for <player>: <command>`.
+- **How to Disable:** Set `"rateLimitDm": {"enabled": false}` under `chatStatsBot` in `plugins/config/zenith-server-toolkit.json` (or disable `onGlobalLimit` / `onPerUserLimit` individually).
 
 #### Anti-Spam DM Fallback
 
@@ -274,6 +282,15 @@ After running ZenithProxy once with the plugin installed, configuration is autom
       "dmCommandTemplate": "/msg {player} {message}",
       "detectionWindowMs": 4000,
       "maxDmPerMinute": 6
+    },
+    "rateLimitDm": {
+      "enabled": true,
+      "onGlobalLimit": true,
+      "onPerUserLimit": true,
+      "dmCommandTemplate": "",
+      "perPlayerDmCooldownMs": 3000,
+      "maxDmPerMinute": 10,
+      "maxDmPerMinutePerPlayer": 6
     }
   }
 }
@@ -300,6 +317,13 @@ After running ZenithProxy once with the plugin installed, configuration is autom
 | `chatStatsBot.antiSpamDm.dmCommandTemplate` | `string` | `"/msg {player} {message}"` | Command template used for private replies (e.g. `"/w {player} {message}"` or `"/tell {player} {message}"`). |
 | `chatStatsBot.antiSpamDm.detectionWindowMs` | `integer` | `4000` | Maximum time in milliseconds after a public reply during which a system warning can claim that reply for DM fallback. |
 | `chatStatsBot.antiSpamDm.maxDmPerMinute` | `integer` | `6` | Maximum number of anti-spam fallback DMs sent per rolling 60-second window. |
+| `chatStatsBot.rateLimitDm.enabled` | `boolean` | `true` | Routes replies blocked by public cooldowns to a private `/msg` DM. Set `{"enabled": false}` to silently drop rate-limited commands. |
+| `chatStatsBot.rateLimitDm.onGlobalLimit` | `boolean` | `true` | Routes replies hitting the 3-second global cooldown to DM. |
+| `chatStatsBot.rateLimitDm.onPerUserLimit` | `boolean` | `true` | Routes replies hitting the 8-second per-user cooldown to DM. |
+| `chatStatsBot.rateLimitDm.dmCommandTemplate` | `string` | `""` | Command template for rate-limit DMs. When blank, inherits `antiSpamDm.dmCommandTemplate` (default `"/msg {player} {message}"`). |
+| `chatStatsBot.rateLimitDm.perPlayerDmCooldownMs` | `integer` | `3000` | Minimum interval in milliseconds between two rate-limit DMs to the same player. |
+| `chatStatsBot.rateLimitDm.maxDmPerMinute` | `integer` | `10` | Maximum total rate-limit DMs sent across all players per rolling 60-second window. |
+| `chatStatsBot.rateLimitDm.maxDmPerMinutePerPlayer` | `integer` | `6` | Maximum rate-limit DMs sent to any single player per rolling 60-second window. |
 
 ---
 
@@ -412,6 +436,7 @@ zenith-server-toolkit/
 │           └── module/
 │               ├── AntiSpamDmHandler.java
 │               ├── ChatStatsBot.java
+│               ├── RateLimitDmThrottle.java
 │               ├── ScoreboardDeathLogger.java
 │               └── SessionLogger.java
 ├── scripts/                     # Portable Shell & Python Utilities
