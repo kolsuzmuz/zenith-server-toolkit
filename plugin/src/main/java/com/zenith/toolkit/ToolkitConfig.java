@@ -37,6 +37,7 @@ public class ToolkitConfig {
         public boolean useSystemTimezone = true;
         public int utcOffsetHours = 0;
         public AntiSpamDm antiSpamDm = new AntiSpamDm();
+        public RateLimitDm rateLimitDm = new RateLimitDm();
 
         /** Fallback configuration for sending replies via DM when server anti-spam blocks public chat. */
         public static class AntiSpamDm {
@@ -46,6 +47,17 @@ public class ToolkitConfig {
             public String dmCommandTemplate = "/msg {player} {message}";
             public int detectionWindowMs = 4000;
             public int maxDmPerMinute = 6;
+        }
+
+        /** Configuration for routing public rate-limited replies to private /msg DMs. */
+        public static class RateLimitDm {
+            public boolean enabled = true;
+            public boolean onGlobalLimit = true;
+            public boolean onPerUserLimit = true;
+            public String dmCommandTemplate = "";
+            public int perPlayerDmCooldownMs = 3000;
+            public int maxDmPerMinute = 10;
+            public int maxDmPerMinutePerPlayer = 6;
         }
     }
 }
